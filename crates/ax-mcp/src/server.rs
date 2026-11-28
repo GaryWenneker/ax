@@ -364,6 +364,52 @@ async fn call_tool_and_wrap(
     project_root: Option<&std::path::Path>,
     verbose: bool,
 ) -> Result<Value, String> {
+    // The remote server reads the chat and cache ids it issued out of the lean
+    // payload, so it gets that payload and drops it itself just before sending
+    // (`strip_for_text_only_client`).
+    let mode = match client_structured_mode(engine) {
+        StructuredMode::TextOnly if engine.is_remote() => StructuredMode::Lean,
+        mode => mode,
+    };
+    let mut wrapped =
+        call_tool_and_wrap_as(engine, name, args, project_root, verbose, mode).await?;
+    if mode == StructuredMode::TextOnly {
+        // Cache-hit, cache-stub and error replies build their own payload.
+        if let Some(reply) = wrapped.as_object_mut() {
+            reply.remove("structuredContent");
+        }
+    }
+    Ok(wrapped)
+}
+
+/// The reply shape for the client on the active connection.
+fn client_structured_mode(engine: &mut McpEngine) -> StructuredMode {
+    let choice = std::env::var("AX_MCP_STRUCTURED").ok();
+    structured_mode(
+        engine.policy_sessions().client_name(),
+        render_full(),
+        choice.as_deref(),
+    )
+}
+
+/// Last step of the remote transport: after the server has recorded the ids in
+/// a reply, a text-only client gets it without `structuredContent`.
+pub(crate) fn strip_for_text_only_client(engine: &mut McpEngine, reply: &mut Value) {
+    if client_structured_mode(engine) == StructuredMode::TextOnly {
+        if let Some(reply) = reply.as_object_mut() {
+            reply.remove("structuredContent");
+        }
+    }
+}
+
+async fn call_tool_and_wrap_as(
+    engine: &mut McpEngine,
+    name: &str,
+    args: Value,
+    project_root: Option<&std::path::Path>,
+    verbose: bool,
+    mode: StructuredMode,
+) -> Result<Value, String> {
     // handle_request already removed private keys and validated the arguments.
     if is_policy_tool(name) {
         if let Err(e) = engine.ensure_policy_fresh().await {
@@ -475,12 +521,8 @@ async fn call_tool_and_wrap(
             // counterfactual file detection stays accurate even though the
             // wire payload below is leaner.
             let est = estimate_savings(name, value, &text, project_root);
-            let full = render_full();
-            let structured = if full {
-                Some(value.clone())
-            } else {
-                lean_structured(name, value)
-            };
+            let full = mode == StructuredMode::Full;
+            let structured = structured_payload(mode, name, value);
             let pending = project_root
                 .map(ax_sync::global_pending_files)
                 .unwrap_or_default();
@@ -717,6 +759,55 @@ fn wrap_call_tool_result_parts(
     out
 }
 
+/// How much `structuredContent` a reply carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StructuredMode {
+    /// The whole result object (`AX_MCP_FULL=1`).
+    Full,
+    /// Counts and machine-actionable fields; bodies only in `content.text`.
+    Lean,
+    /// No `structuredContent` at all: `content.text` is the reply.
+    TextOnly,
+}
+
+/// Clients that hand the model `structuredContent` in place of `content.text`
+/// when both are present. With the lean payload such a client's model sees
+/// "matchedRules: 23" and never the rules, so these clients get text only.
+const STRUCTURED_FIRST_CLIENTS: &[&str] = &["claude"];
+
+/// `full` is `AX_MCP_FULL`; `choice` is `AX_MCP_STRUCTURED` (`off` or `lean`),
+/// which overrides the per-client default. Any other value is ignored.
+pub(crate) fn structured_mode(client: &str, full: bool, choice: Option<&str>) -> StructuredMode {
+    if full {
+        return StructuredMode::Full;
+    }
+    match choice
+        .map(|value| value.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("off") => return StructuredMode::TextOnly,
+        Some("lean") => return StructuredMode::Lean,
+        _ => {}
+    }
+    let client = client.to_ascii_lowercase();
+    if STRUCTURED_FIRST_CLIENTS
+        .iter()
+        .any(|name| client.contains(name))
+    {
+        StructuredMode::TextOnly
+    } else {
+        StructuredMode::Lean
+    }
+}
+
+pub(crate) fn structured_payload(mode: StructuredMode, name: &str, value: &Value) -> Option<Value> {
+    match mode {
+        StructuredMode::Full => Some(value.clone()),
+        StructuredMode::Lean => lean_structured(name, value),
+        StructuredMode::TextOnly => None,
+    }
+}
+
 /// Lean by default. Set `AX_MCP_FULL=1` (or `true`/`yes`) to restore the full
 /// structuredContent payload for clients that rely on it.
 pub(crate) fn render_full() -> bool {
@@ -755,6 +846,7 @@ pub(crate) fn lean_structured(name: &str, value: &Value) -> Option<Value> {
             "instruction": value.get("instruction"),
             "indexStats": value.get("indexStats"),
             "pendingFiles": value.get("pendingFiles"),
+            "pendingFilesTotal": value.get("pendingFilesTotal"),
             "integrity": value.get("integrity"),
             "project": value.get("project"),
             "session": value.get("session"),
@@ -767,6 +859,7 @@ pub(crate) fn lean_structured(name: &str, value: &Value) -> Option<Value> {
             "stats": value.get("stats"),
             "lastIndexedAt": value.get("lastIndexedAt"),
             "pendingFiles": value.get("pendingFiles"),
+            "pendingFilesTotal": value.get("pendingFilesTotal"),
             "integrity": value.get("integrity"),
             "policy": value.get("policy"),
         })),
@@ -1176,6 +1269,130 @@ mod policy_integration {
             .await
             .unwrap();
         dir
+    }
+
+    #[test]
+    fn a_structured_mode_follows_env_then_client() {
+        use StructuredMode::*;
+        assert_eq!(structured_mode("claude-code", false, None), TextOnly);
+        assert_eq!(structured_mode("Claude Desktop", false, None), TextOnly);
+        assert_eq!(structured_mode("cursor-vscode", false, None), Lean);
+        assert_eq!(structured_mode("", false, None), Lean);
+        assert_eq!(
+            structured_mode("cursor-vscode", false, Some("off")),
+            TextOnly
+        );
+        assert_eq!(structured_mode("claude-code", false, Some("lean")), Lean);
+        assert_eq!(
+            structured_mode("claude-code", false, Some("nonsense")),
+            TextOnly
+        );
+        // A4 / N3: AX_MCP_FULL wins over everything.
+        assert_eq!(structured_mode("claude-code", true, None), Full);
+        assert_eq!(structured_mode("cursor-vscode", true, Some("off")), Full);
+    }
+
+    #[test]
+    fn a_structured_payload_per_mode() {
+        let raw = json!({ "inject": "<ax_policy>x</ax_policy>", "matchedRules": 1, "session": {"id": "s"} });
+        assert!(structured_payload(StructuredMode::TextOnly, "ax_preflight", &raw).is_none());
+        assert!(structured_payload(StructuredMode::TextOnly, "ax_status", &raw).is_none());
+        assert_eq!(
+            structured_payload(StructuredMode::Full, "ax_preflight", &raw),
+            Some(raw.clone())
+        );
+        assert_eq!(
+            structured_payload(StructuredMode::Lean, "ax_preflight", &raw),
+            lean_structured("ax_preflight", &raw)
+        );
+        assert!(structured_payload(StructuredMode::Lean, "ax_search", &raw).is_none());
+    }
+
+    async fn preflight_as(client: &str, prompt: &str) -> Value {
+        let dir = session_fixture().await;
+        let mut engine = McpEngine::with_project_root(dir.path().to_path_buf());
+        handle_request(
+            &mut engine,
+            "initialize",
+            json!({ "clientInfo": { "name": client } }),
+        )
+        .await;
+        let call = json!({ "name": "ax_preflight", "arguments": { "prompt": prompt, "session": "a-test-chat" } });
+        let out = handle_request(&mut engine, "tools/call", call)
+            .await
+            .result
+            .expect("preflight");
+        drop(dir);
+        out
+    }
+
+    #[tokio::test]
+    async fn a1_claude_client_gets_the_bodies_as_text_only() {
+        let out = preflight_as("claude-code", "fix a bug").await;
+        assert!(out.get("structuredContent").is_none(), "{out}");
+        let text = out["content"][0]["text"].as_str().unwrap();
+        assert!(
+            text.contains("Rule alpha applies to every change."),
+            "{text}"
+        );
+        assert!(text.contains("Rule gamma applies to every change."));
+    }
+
+    #[tokio::test]
+    async fn a3_error_replies_are_text_only_for_claude_and_structured_for_others() {
+        for (client, structured) in [("claude-code", false), ("gauntlet", true)] {
+            let dir = session_fixture().await;
+            let mut engine = McpEngine::with_project_root(dir.path().to_path_buf());
+            handle_request(
+                &mut engine,
+                "initialize",
+                json!({ "clientInfo": { "name": client } }),
+            )
+            .await;
+            let call = json!({ "name": "ax_skill", "arguments": { "name": "no-such-skill" } });
+            let out = handle_request(&mut engine, "tools/call", call)
+                .await
+                .result
+                .expect("error reply");
+            drop(dir);
+            assert_eq!(out["isError"], true, "{client}: {out}");
+            assert!(!out["content"][0]["text"].as_str().unwrap().is_empty());
+            assert_eq!(
+                out.get("structuredContent").is_some(),
+                structured,
+                "{client}: {out}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a1_other_clients_keep_the_lean_payload() {
+        let out = preflight_as("gauntlet", "fix a bug").await;
+        assert_eq!(out["structuredContent"]["session"]["id"], "a-test-chat");
+        assert!(out["structuredContent"].get("inject").is_none());
+        let text = out["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("Rule alpha applies to every change."));
+    }
+
+    #[tokio::test]
+    async fn a2_text_only_preflight_carries_session_and_directive_questions() {
+        let out = preflight_as("claude-code", "Always run the linter before a commit").await;
+        assert!(out.get("structuredContent").is_none());
+        let text = out["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("session=a-test-chat"), "{text}");
+        assert!(text.contains("<ax_capture_hint>"), "{text}");
+        assert!(
+            text.contains("Save this as a durable team rule? (yes/no)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("Always run the linter before a commit"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("is in captureProposal"),
+            "the hint must not point at a field the model cannot see: {text}"
+        );
     }
 
     #[tokio::test]

@@ -1162,6 +1162,10 @@ async fn finalize_after_extract(
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
         report_optimizing(on_progress, "file-change capture");
+        // Watcher batches carry every path that changed on disk: build output,
+        // node_modules, worktrees, test artifacts. Only paths the index keeps
+        // earn a file-change memory.
+        let paths = &ax_extraction::retain_indexed_paths(project_root, exclude, paths);
         if let Err(error) =
             ax_memory::capture_affected_paths(db.pool(), project_root, paths, now).await
         {

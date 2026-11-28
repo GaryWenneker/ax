@@ -231,6 +231,8 @@ By default ax uses **[Smart Output](/guides/smart-output/)**. Agent-facing bodie
 
 Savings measurement (`ax savings`) always runs against the full pre-projection payload, so the leaner wire format never distorts the numbers.
 
+Some clients, Claude Code among them, hand the model `structuredContent` in place of `content.text` when a reply has both. With the lean payload the model would see counts and never the rule bodies, skill bodies, memories or numbered source, so a client whose `initialize` name contains `claude` gets text-only replies: no `structuredContent` on any tool. The session id, cache ids and directive questions are in the text. `AX_MCP_STRUCTURED=off` forces this for any client and `AX_MCP_STRUCTURED=lean` turns it off. The remote server applies the same rule after it has recorded the chat and cache ids it issued.
+
 Set `AX_MCP_FULL=1` to restore raw `structuredContent` for inline results (for clients that read only structured data). Existing oversized-reply stubs still return cache metadata. It does not bypass project isolation; legacy unscoped handles must be recreated. See [migration and compatibility](/guides/smart-output/#compatibility-and-release).
 
 ### Verbose MCP logging (Cursor Output)
@@ -258,6 +260,7 @@ MCP lines are prefixed with `[ax-mcp]`. From **ax 8.4.4**, matching CLI graph/po
 | Variable | Default | Purpose |
 |---|---|---|
 | `AX_MCP_FULL` | unset | `1`/`true`/`yes` restores full `structuredContent` on every tool |
+| `AX_MCP_STRUCTURED` | unset | `off` sends text-only replies (no `structuredContent`) to every client; `lean` sends the lean payload to every client. Unset: a client whose `initialize` name contains `claude` gets text-only replies, every other client the lean payload. `AX_MCP_FULL` wins over both |
 | `AX_MCP_VERBOSE` | unset | Legacy compatibility flag; current MCP delivery writes project traces and stderr regardless of this value |
 | `AX_EXPLORE_MAX_LINES` | 40 | Max source lines per `ax_explore` snippet |
 | `AX_EXPLORE_MAX_SOURCE_CHARS` | 2000 | Max source characters per `ax_explore` snippet |

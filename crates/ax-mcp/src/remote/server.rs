@@ -889,7 +889,7 @@ async fn post(
     });
     let method = request.method.clone();
     let params = request.params.take().unwrap_or(Value::Null);
-    let outcome = if let Some((lock, slot)) = mutation {
+    let (outcome, mut engine) = if let Some((lock, slot)) = mutation {
         // An index run must finish even when this request times out or the
         // client goes away: a run dropped halfway leaves a mix of old and new
         // rows and its file lock held. The task keeps the session and its request slot
@@ -902,7 +902,7 @@ async fn post(
             (outcome, engine)
         });
         match tokio::time::timeout(timeout, &mut task).await {
-            Ok(Ok((outcome, _session))) => outcome,
+            Ok(Ok((outcome, session))) => (outcome, session),
             Ok(Err(_)) => return error(StatusCode::INTERNAL_SERVER_ERROR, "Ax tool failed"),
             Err(_) => {
                 // Nobody waits for the answer any more; keep its trace.
@@ -961,7 +961,7 @@ async fn post(
         match tokio::time::timeout(timeout, handle_request(&mut engine.engine, &method, params))
             .await
         {
-            Ok(outcome) => outcome,
+            Ok(outcome) => (outcome, engine),
             Err(_) => return error(StatusCode::GATEWAY_TIMEOUT, "Ax tool timed out"),
         }
     };
@@ -1099,6 +1099,9 @@ async fn post(
                 }
             }
         }
+    }
+    if request.method == "tools/call" {
+        crate::server::strip_for_text_only_client(&mut engine.engine, &mut value);
     }
     rpc(request.id, Ok(value))
 }
