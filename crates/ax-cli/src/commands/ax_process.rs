@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 fn lookup<T>(pid: u32, f: impl FnOnce(&sysinfo::Process) -> T) -> Option<T> {
-    let mut sys = sysinfo::System::new();
+    let mut sys = sysinfo::System::new().ok()?;
     let spid = sysinfo::Pid::from_u32(pid);
     sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[spid]), true);
     sys.process(spid).map(f)
@@ -54,7 +54,9 @@ pub(crate) fn is_ax_process(pid: u32) -> bool {
 /// Every running ax process except `self_pid`.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn other_ax_pids(self_pid: u32) -> Vec<u32> {
-    let mut sys = sysinfo::System::new();
+    let Ok(mut sys) = sysinfo::System::new() else {
+        return Vec::new();
+    };
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     let mut pids: Vec<u32> = sys
         .processes()
