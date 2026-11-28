@@ -1,38 +1,7 @@
-import {extractFields, extractPayloadJson, tryParseJson, type TraceEntry} from './mcpTrace';
-
-const DOMAIN_ACTIONS: Partial<Record<TraceEntry['kind'], {pattern: RegExp; start: string; ok: string}>> = {
-  workspace: {pattern: /^workspace sync (start|ok)(?:\s|$)/, start: 'Workspace sync started', ok: 'Workspace sync completed'},
-  memory: {pattern: /^memory capture-git (start|ok)(?:\s|$)/, start: 'Git history capture started', ok: 'Git history captured'},
-  ship: {pattern: /^ship(?:-ci| ci)? (start|ok)(?:\s|$)/, start: 'Quality check started', ok: 'Quality check completed'},
-};
+import {extractFields, extractPayloadJson, memoByEntry, newEntryMemo, tryParseJson, type TraceEntry} from './mcpTrace.ts';
 
 function withoutLoggerPrefix(text: string): string {
   return text.replace(/^(?:\[(?:ax|ax-mcp)\]\s*)?(?:🪓\s*)?/, '');
-}
-
-function domainFacts(message: string): string {
-  const fields = new Map([...message.matchAll(/(?:^|\s)([a-z_]+)=([^\s]+)/g)].map(match => [match[1], match[2]]));
-  const facts: string[] = [];
-  for (const [key, label] of [['files','files'],['scanned','scanned'],['captured','captured'],['duration_ms','ms'],['limit','limit']]) {
-    const value=fields.get(key);
-    if (value && /^\d+$/.test(value)) facts.push(key==='limit'?`Limit ${value}`:`${value} ${label}`);
-  }
-  const mode=fields.get('mode');
-  if (mode) facts.push(mode==='ci'?'CI':mode==='evaluate'?'Evaluate':mode);
-  const passed=fields.get('passed');
-  if (passed==='1' || passed==='0') facts.push(passed==='1'?'Passed':'Failed');
-  const watch=fields.get('watch');
-  if (watch==='1' || watch==='0') facts.push(watch==='1'?'Watch on':'Watch off');
-  return facts.join(' · ');
-}
-
-/** Presentation only: raw entries remain available for search and inspection. */
-export function loggingRowPresentation(entry: Readonly<Pick<TraceEntry, 'kind' | 'message' | 'tool'>>, {title, subtitle, text}: {title: string; subtitle: string; text?: string}): {title: string; subtitle: string} {
-  if (text) return {title: text, subtitle};
-  const action=DOMAIN_ACTIONS[entry.kind];
-  const phase=action?.pattern.exec(withoutLoggerPrefix(entry.message))?.[1];
-  if (action && (phase==='start' || phase==='ok')) return {title: action[phase], subtitle: domainFacts(entry.message)};
-  return {title: withoutLoggerPrefix(title), subtitle};
 }
 
 const TOOL_LABELS: Record<string, string> = {
@@ -124,12 +93,12 @@ function fieldsOf(message: string): Map<string, string> {
   return new Map(extractFields(withoutLoggerPrefix(message)).map((field) => [field.key, field.value]));
 }
 
-function argsOf(entry: RowEntry): Record<string, unknown> | null {
+function argsOf(entry: RowEntry, fields?: Map<string, string>): Record<string, unknown> | null {
   const payload = extractPayloadJson(entry as TraceEntry);
   if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
     return payload as Record<string, unknown>;
   }
-  const raw = fieldsOf(entry.message).get('args');
+  const raw = (fields ?? fieldsOf(entry.message)).get('args');
   const parsed = raw ? tryParseJson(raw) : null;
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
     return parsed as Record<string, unknown>;
@@ -243,11 +212,12 @@ function inboundTitle(tool: string | null, args: Record<string, unknown> | null,
   return label;
 }
 
-function previewTitle(fields: Map<string, string>, label: string): string {
+function previewTitle(fields: Map<string, string>, label: string, payload: unknown): string {
   const text = fields.get('text');
   if (!text) return 'Returned';
   if (text.trim().startsWith('{') || text.trim().startsWith('[')) {
-    const parsed = tryParseJson(text);
+    // The whole-line payload is already parsed (and cached); parse the field only when it differs.
+    const parsed = payload !== null && payload !== undefined ? payload : tryParseJson(text);
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       const record = parsed as Record<string, unknown>;
       if (Array.isArray(record.affected) && record.affected.length === 0) return 'No affected tests';
@@ -313,14 +283,13 @@ function domainTitle(kind: string, fields: Map<string, string>, body: string, la
   return label;
 }
 
-function rowTitle(entry: RowEntry, args: Record<string, unknown> | null, label: string): string {
-  const fields = fieldsOf(entry.message);
+function rowTitle(entry: RowEntry, args: Record<string, unknown> | null, label: string, fields: Map<string, string>): string {
   const body = withoutLoggerPrefix(entry.message).replace(/\s*session=\S+/g, '').trim();
   if (entry.kind === 'enrich' || body.startsWith('enrich ')) {
     return enrichTitle(fields, body.replace(/^enrich\s+/, ''));
   }
   if (entry.kind === 'inbound') return inboundTitle(entry.tool, args, label);
-  if (entry.kind === 'preview') return previewTitle(fields, label);
+  if (entry.kind === 'preview') return previewTitle(fields, label, extractPayloadJson(entry as TraceEntry));
   if (entry.kind === 'outbound') {
     const duration = digits(fields, 'duration_ms');
     return duration ? `${duration} ms` : 'Returned';
@@ -336,16 +305,22 @@ function rowTitle(entry: RowEntry, args: Record<string, unknown> | null, label: 
   return domainTitle(entry.kind, fields, body, label);
 }
 
+const rowViewMemo = newEntryMemo<LoggingRowView>();
+
 /** Display-time row. The log line stays the source for search and the detail view. */
 export function loggingRowView(entry: RowEntry): LoggingRowView {
-  const args = argsOf(entry);
+  return {...memoByEntry(rowViewMemo, entry, () => buildRowView(entry))};
+}
+
+function buildRowView(entry: RowEntry): LoggingRowView {
   const fields = fieldsOf(entry.message);
+  const args = argsOf(entry, fields);
   const sessionId = textOf(args?.session) ?? fields.get('session') ?? null;
   const memoryRaw = fields.get('memory');
   const memoryId =
     memoryRaw && /^turn-[A-Za-z0-9_-]+$/.test(memoryRaw.trim()) ? memoryRaw.trim() : null;
   const label = loggingToolLabel(entry.tool, entry.kind);
-  const fact = rowTitle(entry, args, label) || label;
+  const fact = rowTitle(entry, args, label, fields) || label;
   const title = fact === label || fact.toLowerCase().startsWith(`${label.toLowerCase()} `) ? fact : `${label} · ${fact}`;
   return {
     label,

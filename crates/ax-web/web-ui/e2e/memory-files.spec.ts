@@ -5,10 +5,25 @@ import { fileURLToPath } from 'node:url';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const image = path.join(repo, 'docs/specs/policy-graph.png');
-const commit = execFileSync('git', ['-C', repo, 'rev-parse', '--short=9', 'b7caeb1']).toString().trim();
+const knownCommit = 'b7caeb1';
+
+/**
+ * The short hash of a commit that added `file`, or null when this clone does not have it (a shallow CI
+ * checkout, rewritten history, no git). Looked up when the tests run, never while Playwright collects specs.
+ */
+let lookedUp: string | null | undefined;
+function historicalCommit(): string | null {
+  if (lookedUp !== undefined) return lookedUp;
+  try {
+    lookedUp = execFileSync('git', ['-C', repo, 'rev-parse', '--verify', '--quiet', '--short=9', `${knownCommit}^{commit}`], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() || null;
+  } catch {
+    lookedUp = null;
+  }
+  return lookedUp;
+}
 const file = 'docs/specs/calm-list-style.md';
 
-async function createMemory(request: APIRequestContext, title: string): Promise<string> {
+async function createMemory(request: APIRequestContext, title: string, commit: string): Promise<string> {
   const res = await request.post('/api/memory', {
     data: {
       title,
@@ -24,11 +39,13 @@ async function createMemory(request: APIRequestContext, title: string): Promise<
 
 test.describe('Memory blade files', () => {
   test.skip(({ isMobile }) => isMobile, 'desktop hover');
+  test.skip(() => historicalCommit() === null, `commit ${knownCommit} is not in this clone`);
   let id = '';
   const title = `e2e memory files ${Date.now()}`;
 
   test.beforeAll(async ({ request }) => {
-    id = await createMemory(request, title);
+    const commit = historicalCommit();
+    if (commit) id = await createMemory(request, title, commit);
   });
 
   test.afterAll(async ({ request }) => {

@@ -1,9 +1,10 @@
-import { resolveOpenTarget } from '../lib/policySelection';
+import { dropPolicyRow, indexPolicyRows, patchPolicyRow, policyRowKey } from '../lib/policyRowKeys';
 import { useLive, useNewKeys } from '../lib/useLive';
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import {
   deletePolicyCopy,
   deletePolicyRule,
+  fetchCatalogAudits,
   fetchPolicyRules,
   fetchPolicySyncSettings,
   proposePolicyCapture,
@@ -25,7 +26,7 @@ import {
 } from '../components/ui/PageLayout';
 import { PolicyCount, PolicySortControl, PolicyToolbar } from '../components/ui/PolicyTable';
 import { PolicyCalmList } from '../components/ui/PolicyCalmList';
-import { auditOneRule } from '../components/SkillCatalogBar';
+import { auditOneRule } from '../lib/policyAudit';
 import { PolicyContextMenu } from '../components/ui/PolicyContextMenu';
 import { PolicyDbLegend } from '../components/PolicyMetaView';
 import { priorityMeta, ruleRowSubtitle } from '../lib/calmRows';
@@ -45,10 +46,12 @@ import {
   type RuleSortKey,
   type SortDir,
 } from '../components/ui/policyListUtils';
+import { runThenReload } from '../lib/policyActions';
+import { usePolicyGroups, usePolicySelection } from '../lib/usePolicyList';
 import { usePageContext } from '../context/UiContext';
 import Codicon from '../components/Codicon';
 import { POLICY_SCOPES, type CaptureProposal, type PolicyRuleRow } from '../policyTypes';
-import { visibleRuleGroups, toggleCollapsed, ruleResolvedGroup } from '../skillGroups';
+import { visibleRuleGroups, ruleResolvedGroup } from '../skillGroups';
 import {
   allListedCollapsed,
   allListedExpanded,
@@ -57,13 +60,11 @@ import {
   matchesGroupFilter,
 } from '../skillGroupFilter';
 import { PolicyGroupListControls } from '../components/ui/PolicyGroupListControls';
-import { loadJson, saveJson } from '../lib/uiStorage';
 import AutoGroupModal from '../components/AutoGroupModal';
 import PolicyGraphOverlay from '../components/PolicyGraphOverlay';
 import { menuTargets, nextRowSelection, toggleVisibleSelection } from '../lib/policySelection';
 import SettingsSelect from '../components/ui/SettingsSelect';
 import {
-  POLICY_BLADE_DISMISS_MS,
   pointerKeepsPolicyBlade,
   policyDetailOpen,
   policyWorkspaceHostClass,
@@ -89,73 +90,38 @@ interface Props {
   onMatch: () => void;
 }
 
+const ruleIdOf = (r: { id: string }) => r.id;
+
 export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origin: routeOrigin, projectId: routeProjectId, onSelect, onEditFull, onMatch }: Props) {
-  const [selectedId, setSelectedId] = useState<string | null>(selectedIdFromRoute);
   const [graphOpen, setGraphOpen] = useState(false);
   const [autoGroupOpen, setAutoGroupOpen] = useState(false);
-  const [openOrigin, setOpenOrigin] = useState<string | undefined>();
-  const [openProjectId, setOpenProjectId] = useState<number | undefined>();
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(selectedIdFromRoute ? [selectedIdFromRoute] : []));
-  const [anchorId, setAnchorId] = useState<string | null>(selectedIdFromRoute);
-  const [bladeClosing, setBladeClosing] = useState(false);
   const editorRef = useRef<HTMLDivElement | null>(null);
-  const onSelectRef = useRef(onSelect);
-  onSelectRef.current = onSelect;
 
-  useEffect(() => {
-    setSelectedId(selectedIdFromRoute);
-    if (selectedIdFromRoute) {
-      setSelectedIds(new Set([selectedIdFromRoute]));
-      setAnchorId(selectedIdFromRoute);
-    }
-  }, [selectedIdFromRoute]);
-
-
-  function selectRule(id: string | null, row?: { origin?: string; projectId?: number }) {
-    setBladeClosing(false);
-    setSelectedId(id);
-    const global = row && isGlobalPolicy(row);
-    onSelectRef.current(id, global ? 'global' : undefined, global ? row.projectId : undefined);
-    if (row) {
-      setOpenOrigin(row.origin);
-      setOpenProjectId(row.projectId);
-    }
-    if (id) {
-      setSelectedIds(new Set([id]));
-      setAnchorId(id);
-    } else if (selectedIds.size <= 1) {
-      setSelectedIds(new Set());
-    }
-  }
-
-  function requestCloseBlade() {
-    if (!selectedId || bladeClosing) return;
-    setBladeClosing(true);
-  }
-
-  useEffect(() => {
-    if (!bladeClosing) return;
-    const t = window.setTimeout(() => {
-      setBladeClosing(false);
-      setSelectedId(null);
-      onSelectRef.current(null);
-      setSelectedIds((prev) => (prev.size <= 1 ? new Set() : prev));
-    }, POLICY_BLADE_DISMISS_MS);
-    return () => window.clearTimeout(t);
-  }, [bladeClosing]);
   const [rules, setRules] = useState<PolicyRuleRow[]>([]);
-
-  useEffect(() => {
-    if (!selectedIdFromRoute) return;
-    const t = resolveOpenTarget(
-      rules.map((r) => ({ key: r.id, origin: r.origin, projectId: r.projectId })),
-      selectedIdFromRoute,
-      routeOrigin,
-      routeProjectId,
-    );
-    setOpenOrigin(t.origin);
-    setOpenProjectId(t.projectId);
-  }, [selectedIdFromRoute, routeOrigin, routeProjectId, rules]);
+  const {
+    selectedKey: selectedId,
+    setSelectedKey: setSelectedId,
+    openOrigin,
+    setOpenOrigin,
+    openProjectId,
+    setOpenProjectId,
+    selectedIds,
+    setSelectedIds,
+    anchorId,
+    setAnchorId,
+    bladeClosing,
+    setBladeClosing,
+    onSelectRef,
+    select: selectRule,
+    requestCloseBlade,
+  } = usePolicySelection({
+    routeKey: selectedIdFromRoute,
+    routeOrigin,
+    routeProjectId,
+    rows: rules,
+    keyOf: ruleIdOf,
+    onSelect,
+  });
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [auditBrief, setAuditBrief] = useState('');
@@ -180,26 +146,7 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
   const [sortKey, setSortKey] = useState<RuleSortKey>('id');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [projectStorage, setProjectStorage] = useState<'files' | 'database'>('files');
-  const [collapsed, setCollapsed] = useState<Set<string>>(
-    () => new Set(loadJson<string[]>('rules-groups-collapsed', [])),
-  );
-  const [groupIds, setGroupIds] = useState<string[]>(
-    () => loadJson<string[]>('rules-groups-filter', []),
-  );
-
-  function persistCollapsed(next: Set<string>) {
-    saveJson('rules-groups-collapsed', [...next]);
-    setCollapsed(next);
-  }
-
-  function persistGroupIds(next: string[]) {
-    saveJson('rules-groups-filter', next);
-    setGroupIds(next);
-  }
-
-  function toggleGroup(id: string) {
-    persistCollapsed(toggleCollapsed(collapsed, id));
-  }
+  const { collapsed, groupIds, persistCollapsed, persistGroupIds, toggleGroup } = usePolicyGroups('rules');
 
   useEffect(() => {
     Promise.all([fetchPolicyRules(), fetchPolicySyncSettings()])
@@ -213,9 +160,9 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
   }, []);
 
   function loadRuleAuditHints() {
-    void fetch('/api/policy/rules/catalog/audits')
-      .then((res) => (res.ok ? res.json() : []))
-      .then((rows: { name: string; verdict?: string | null; mechanical_warns: number; mechanical_fails: number }[]) => {
+    // Audit hints are optional decoration: when they cannot be read the list keeps its current hints.
+    fetchCatalogAudits('rules')
+      .then((rows) => {
         const next: Record<string, string> = {};
         for (const row of rows) {
           next[row.name] = row.verdict
@@ -271,7 +218,8 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
   const grouped = useMemo(() => visibleRuleGroups(visible), [visible]);
   const listedIds = useMemo(() => grouped.map((g) => g.id), [grouped]);
   const visibleRowIds = useMemo(() => visible.map((r) => r.id), [visible]);
-  const ruleById = useMemo(() => new Map(visible.map((r) => [r.id, r])), [visible]);
+  // Keyed by row: a project rule and a global.db copy can share an id.
+  const ruleByKey = useMemo(() => indexPolicyRows(visible, ruleIdOf), [visible]);
 
   useEffect(() => {
     function onPtr(e: PointerEvent) {
@@ -346,21 +294,21 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
 
   usePageContext('Rules', !loading && !error ? `${visible.length}/${listed.length} rules` : undefined);
 
-  async function remove(id: string) {
+  async function remove(id: string, key: string) {
     if (!confirm(`Delete rule "${id}"?`)) return;
     try {
       await deletePolicyRule(id);
-      setRules((prev) => prev.filter((r) => r.id !== id));
+      setRules((prev) => dropPolicyRow(prev, key, ruleIdOf));
       if (selectedId === id) selectRule(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : `Failed to delete rule "${id}"`);
     }
   }
 
-  async function toggleEnabled(id: string, enabled: boolean) {
+  async function toggleEnabled(id: string, enabled: boolean, key: string) {
     try {
       await setPolicyRuleEnabled(id, enabled);
-      setRules((prev) => prev.map((r) => (r.id === id ? { ...r, enabled } : r)));
+      setRules((prev) => patchPolicyRow(prev, key, ruleIdOf, (r) => ({ ...r, enabled })));
     } catch (e) {
       setError(e instanceof Error ? e.message : `Failed to update rule "${id}"`);
     }
@@ -387,8 +335,8 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
           setPropertiesFor(row.id);
           setPropertiesTick((n) => n + 1);
         }
-        if (action === 'enable' && !isGlobalPolicy(row)) await toggleEnabled(row.id, true);
-        if (action === 'disable' && !isGlobalPolicy(row)) await toggleEnabled(row.id, false);
+        if (action === 'enable' && !isGlobalPolicy(row)) await toggleEnabled(row.id, true, policyRowKey(row, ruleIdOf));
+        if (action === 'disable' && !isGlobalPolicy(row)) await toggleEnabled(row.id, false, policyRowKey(row, ruleIdOf));
         if (action === 'move-global' && !isGlobalPolicy(row)) {
           await relocatePolicyItem('rule', row.id, 'global', row.projectId);
         }
@@ -399,18 +347,20 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
           if (isGlobalPolicy(row)) await deletePolicyCopy('rule', row.id, row.projectId);
           else {
             await deletePolicyRule(row.id);
-            setRules((prev) => prev.filter((x) => x.id !== row.id));
+            setRules((prev) => dropPolicyRow(prev, policyRowKey(row, ruleIdOf), ruleIdOf));
           }
         }
-      }
-      if (action === 'move-global' || action === 'move-project' || (action === 'delete' && targets.some(isGlobalPolicy))) {
-        reloadRules();
       }
       if (action === 'move-global' || action === 'delete') {
         if (targets.some((t) => t.id === selectedId)) selectRule(null);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Context menu action failed');
+    } finally {
+      // Reload even after a failure part-way through, so moved or deleted rows are not left on screen.
+      if (action === 'move-global' || action === 'move-project' || (action === 'delete' && targets.some(isGlobalPolicy))) {
+        reloadRules();
+      }
     }
   }
 
@@ -424,21 +374,17 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
     }
   }
 
-  async function toggleItemStorage(id: string, currentEffective?: string) {
+  async function toggleItemStorage(id: string, key: string, currentEffective?: string) {
     const next = currentEffective === 'database' ? 'files' : 'database';
     try {
       const res = await setPolicyRuleStorage(id, next);
       setRules((prev) =>
-        prev.map((r) =>
-          r.id === id
-            ? {
-                ...r,
-                storage: next,
-                effectiveStorage: res.effectiveStorage ?? next,
-                storageIsOverride: res.storageIsOverride ?? true,
-              }
-            : r,
-        ),
+        patchPolicyRow(prev, key, ruleIdOf, (r) => ({
+          ...r,
+          storage: next,
+          effectiveStorage: res.effectiveStorage ?? next,
+          storageIsOverride: res.storageIsOverride ?? true,
+        })),
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : `Failed to update storage for "${id}"`);
@@ -743,12 +689,12 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
                     selectedIds={selectedIds}
                     compact={Boolean(selectedId)}
                     filters={{ level, scope, tags, onLevel: toggleFilterLevel, onScope: toggleFilterScope, onTag: toggleFilterTag }}
-                    onRowClick={(e, id) => {
-                      const r = ruleById.get(id);
+                    onRowClick={(e, _id, key) => {
+                      const r = ruleByKey.get(key);
                       if (r) onRuleRowClick(e, r);
                     }}
-                    onRowContext={(e, id) => {
-                      const r = ruleById.get(id);
+                    onRowContext={(e, _id, key) => {
+                      const r = ruleByKey.get(key);
                       if (r) onRuleContext(e, r);
                     }}
                     visibleSelected={visibleRowIds.length > 0 && visibleRowIds.every((id) => selectedIds.has(id))}
@@ -773,8 +719,8 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
                       setSelectedIds(next);
                       setAnchorId(id);
                     }}
-                    onToggleEnabled={(id, enabled) => void toggleEnabled(id, enabled)}
-                    onToggleStorage={(id, current) => void toggleItemStorage(id, current)}
+                    onToggleEnabled={(id, enabled, key) => void toggleEnabled(id, enabled, key)}
+                    onToggleStorage={(id, current, key) => void toggleItemStorage(id, key, current)}
                     onAudit={(id) => {
                       setError('');
                       void auditOneRule(id).then(
@@ -786,19 +732,19 @@ export default function PolicyRulesPage({ selectedId: selectedIdFromRoute, origi
                         (err: unknown) => setError(err instanceof Error ? err.message : 'Audit failed'),
                       );
                     }}
-                    onEdit={(id) => {
-                      const r = ruleById.get(id);
+                    onEdit={(id, key) => {
+                      const r = ruleByKey.get(key);
                       onEditFull(id, r?.origin, r?.projectId);
                     }}
-                    onDelete={(id) => {
-                      const r = ruleById.get(id);
+                    onDelete={(id, key) => {
+                      const r = ruleByKey.get(key);
                       if (r && isGlobalPolicy(r)) {
                         if (confirm(`Delete rule "${id}" from global.db?`)) {
-                          void deletePolicyCopy('rule', id, r.projectId).then(reloadRules);
+                          void runThenReload(() => deletePolicyCopy('rule', id, r.projectId), reloadRules, setError, 'Delete failed');
                         }
                         return;
                       }
-                      void remove(id);
+                      void remove(id, key);
                     }}
                   />
                 </div>

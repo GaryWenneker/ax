@@ -1,3 +1,5 @@
+import { commitLines, splitMemoryBody } from './memoryDetail.ts';
+
 /** One-line label for a memory row.
  * Turn titles are stored clipped. When the body keeps the rest of that same line, show it. */
 export function memoryRowHeadline(memory: { title: string; body: string }): string {
@@ -41,12 +43,9 @@ export function instantMs(value: string | number | null | undefined): number | n
   return Number.isNaN(ms) ? null : ms;
 }
 
+/** Commits listed in a turn body, read by the same parser as the detail view. */
 function countCommits(body: string): number {
-  const beforeOutcome = body.split('\n\nOutcome: ')[0];
-  const start = beforeOutcome.indexOf('\n\nCommits:');
-  if (start < 0) return 0;
-  const section = beforeOutcome.slice(start + '\n\nCommits:'.length).split('\n\n')[0];
-  return section.split('\n').filter((line) => /^- [0-9a-f]{7,40}\b/.test(line.trim())).length;
+  return commitLines(splitMemoryBody(body).commits).length;
 }
 
 export function memoryRowCounts(memory: { files: string[]; body: string }): string {

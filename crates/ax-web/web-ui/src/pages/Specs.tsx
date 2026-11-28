@@ -19,6 +19,26 @@ import SpecsDetail, { type EditorMode, type SpecRevision } from './SpecsDetail';
 import SpecWorkspace, { NewPlanModal } from './SpecWorkspace';
 import { workspaceFromHierarchy, workspaceFromLegacy, type WorkspaceDoc } from '../lib/specWorkspace';
 import type { ListColumn } from '../components/ui/ListColumns';
+import { editorResetForLoad, specDocKey } from '../lib/specDocLoad';
+import {
+  diffSelection,
+  filterSpecs,
+  initialVersion,
+  specRouteSearch,
+  specRouteTarget,
+  type SpecsBladeTab,
+  type SpecsKindFilter,
+  type SpecsStatusFilter,
+} from '../lib/specsPageModel';
+import {
+  approveSpec,
+  createAlternativePlan,
+  fetchPlanRevisions,
+  fetchSpecList,
+  fetchSpecRevisions,
+  saveSpecPlanRevision,
+  saveSpecRevision,
+} from '../specsApi';
 
 type SpecItem = {
   id: string;
@@ -36,9 +56,9 @@ type SpecItem = {
   latestBasedOn?: number | null;
 };
 
-type KindFilter = 'all' | 'plan' | 'spec';
-type StatusFilter = 'all' | 'draft' | 'approved' | 'change_requested';
-type BladeTab = 'agreement' | 'plans' | 'authority';
+type KindFilter = SpecsKindFilter;
+type StatusFilter = SpecsStatusFilter;
+type BladeTab = SpecsBladeTab;
 type EditorTarget = 'spec' | 'plan';
 type SpecsView = 'workspace' | 'documents';
 
@@ -186,19 +206,8 @@ function jumpColumn(ids: string[], kind: 'logging' | 'memory') {
 }
 
 function syncRoute(specId: string | null, planId: string | null, tab: BladeTab) {
-  const url = new URL(window.location.href);
-  if (!specId) {
-    url.searchParams.delete('spec');
-    url.searchParams.delete('plan');
-    url.searchParams.delete('tab');
-  } else {
-    url.searchParams.set('spec', specId);
-    if (planId) url.searchParams.set('plan', planId);
-    else url.searchParams.delete('plan');
-    if (tab === 'agreement') url.searchParams.delete('tab');
-    else url.searchParams.set('tab', tab);
-  }
-  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  const { pathname, search, hash } = window.location;
+  window.history.replaceState({}, '', `${pathname}${specRouteSearch(search, specId, planId, tab)}${hash}`);
 }
 
 export default function SpecsPage() {
@@ -227,16 +236,22 @@ export default function SpecsPage() {
   const [view, setView] = useState<SpecsView>(initialView());
   const [newPlanOpen, setNewPlanOpen] = useState(false);
   const loadToken = useRef(0);
+  /** The document whose revisions the editor holds, as a specDocKey; null while none has loaded. */
+  const loadedDoc = useRef<string | null>(null);
+  /** Why the open document's revisions could not be loaded, shown in place of the editor. */
+  const [docError, setDocError] = useState('');
   const closeTimer = useRef<number | null>(null);
   const pane = useRef<HTMLDivElement>(null);
   const sentinel = useRef<HTMLDivElement>(null);
+  /** The open document and its unsaved state, for the popstate listener registered once. */
+  const openState = useRef({ dirty, selected, selectedPlan, bladeTab });
+  openState.current = { dirty, selected, selectedPlan, bladeTab };
 
   async function load() {
     try {
       // The Specs page rescans the plan folders each time it loads or saves,
       // so a plan written on disk shows up at once.
-      const response = await fetch('/api/specs?refresh=1');
-      const data = await response.json();
+      const data = await fetchSpecList({ refresh: true });
       setError(data.error ? String(data.error) : '');
       const parsed = parseSpecPayload(data);
       if (parsed.mode === 'hierarchy') {
@@ -265,52 +280,67 @@ export default function SpecsPage() {
     setDirty(false);
   }
 
+  /** Clear the editor before loading a different document, so its text never shows under the new title. */
+  function beginDocLoad(key: string) {
+    const reset = editorResetForLoad(loadedDoc.current, key);
+    if (reset) {
+      loadedDoc.current = null;
+      setRevisions(reset.revisions);
+      setOpenVersion(reset.openVersion);
+      setDraftText(reset.draftText);
+      setDirty(reset.dirty);
+    }
+    setDocError('');
+  }
+
   async function loadRevisions(id: string, version: number | null) {
     const token = ++loadToken.current;
+    const key = specDocKey('spec', id);
     setSelected(id);
     setEditorTarget('spec');
     setSelectedPlan(null);
+    beginDocLoad(key);
     try {
-      const response = await fetch(`/api/specs/${encodeURIComponent(id)}/revisions`);
-      const data = await response.json();
+      const data = await fetchSpecRevisions(id);
       if (token !== loadToken.current) return;
       if (data.error) setError(String(data.error));
       const rows: SpecRevision[] = Array.isArray(data.revisions) ? data.revisions : [];
+      loadedDoc.current = key;
       setRevisions(rows);
-      const approved = rows.find((row) => row.status === 'approved');
-      const newest = rows.length > 0 ? rows[rows.length - 1].version : null;
-      const exists = version != null && rows.some((row) => row.version === version);
-      showVersion(rows, exists ? version : approved?.version ?? newest, false);
+      showVersion(rows, initialVersion(rows, version), false);
     } catch (err) {
       if (token !== loadToken.current) return;
-      setError(err instanceof Error ? err.message : 'Could not load revisions');
+      setDocError(`Could not load this spec: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
   async function loadPlanRevisions(planId: string, version: number | null) {
     const token = ++loadToken.current;
+    const key = specDocKey('plan', planId);
     setSelectedPlan(planId);
     setEditorTarget('plan');
     setBladeTab('plans');
+    beginDocLoad(key);
     try {
-      const response = await fetch(`/api/specs/plan/${encodeURIComponent(planId)}/revisions`);
-      const data = await response.json();
+      const data = await fetchPlanRevisions(planId);
       if (token !== loadToken.current) return;
       if (data.error) setError(String(data.error));
       const rows: SpecRevision[] = Array.isArray(data.revisions) ? data.revisions : [];
+      loadedDoc.current = key;
       setRevisions(rows);
-      const approved = rows.find((row) => row.status === 'approved');
-      const newest = rows.length > 0 ? rows[rows.length - 1].version : null;
-      const exists = version != null && rows.some((row) => row.version === version);
-      showVersion(rows, exists ? version : approved?.version ?? newest, false);
+      showVersion(rows, initialVersion(rows, version), false);
     } catch (err) {
       if (token !== loadToken.current) return;
-      setError(err instanceof Error ? err.message : 'Could not load plan revisions');
+      setDocError(`Could not load this plan: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
   function closeBlade() {
     if (!selected || closing) return;
+    if (dirty) {
+      setNotice('Discard or save unsaved changes before closing.');
+      return;
+    }
     setClosing(true);
     closeTimer.current = window.setTimeout(() => {
       closeTimer.current = null;
@@ -318,6 +348,8 @@ export default function SpecsPage() {
       setSelectedPlan(null);
       setBladeTab('agreement');
       setEditorTarget('spec');
+      loadedDoc.current = null;
+      setDocError('');
       setRevisions([]);
       setOpenVersion(null);
       setDirty(false);
@@ -329,6 +361,10 @@ export default function SpecsPage() {
   }
 
   function openSpec(id: string, tab: BladeTab = 'agreement', planId: string | null = null) {
+    if (dirty) {
+      setNotice('Discard or save unsaved changes before opening another document.');
+      return;
+    }
     if (closeTimer.current != null) {
       window.clearTimeout(closeTimer.current);
       closeTimer.current = null;
@@ -356,20 +392,21 @@ export default function SpecsPage() {
 
   useEffect(() => {
     function openFromRoute() {
-      const searchParams = new URLSearchParams(window.location.search);
-      const id = searchParams.get('spec');
-      if (!id) return;
-      const plan = searchParams.get('plan');
-      const tabParam = searchParams.get('tab');
-      const tab: BladeTab =
-        plan ? 'plans' : tabParam === 'plans' || tabParam === 'authority' ? tabParam : 'agreement';
+      const target = specRouteTarget(window.location.search);
+      if (!target) return;
+      const open = openState.current;
+      if (open.dirty) {
+        setNotice('Discard or save unsaved changes before opening another document.');
+        syncRoute(open.selected, open.selectedPlan, open.bladeTab);
+        return;
+      }
       setClosing(false);
-      setSelected(id);
-      setBladeTab(tab);
-      if (plan) {
-        void loadPlanRevisions(plan, null);
+      setSelected(target.specId);
+      setBladeTab(target.tab);
+      if (target.planId) {
+        void loadPlanRevisions(target.planId, null);
       } else {
-        void loadRevisions(id, null);
+        void loadRevisions(target.specId, null);
       }
     }
     openFromRoute();
@@ -419,6 +456,8 @@ export default function SpecsPage() {
     if (tab === 'plans') {
       setSelectedPlan(null);
       setEditorTarget('spec');
+      loadedDoc.current = null;
+      setDocError('');
       setRevisions([]);
       setOpenVersion(null);
       syncRoute(selected, null, tab);
@@ -431,12 +470,7 @@ export default function SpecsPage() {
   async function approve(version: number) {
     if (!selected || dirty || editorTarget !== 'spec') return;
     try {
-      const response = await fetch(`/api/specs/${encodeURIComponent(selected)}/approve`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ version }),
-      });
-      const data = await response.json();
+      const data = await approveSpec(selected, version);
       if (!data.ok) {
         setError(String(data.error || 'Approval failed'));
         return;
@@ -453,18 +487,13 @@ export default function SpecsPage() {
     if (!selected || openVersion == null || !dirty) return;
     try {
       if (editorTarget === 'plan' && selectedPlan) {
-        const response = await fetch('/api/specs/plan-revision', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            planId: selectedPlan,
-            basedOn: openVersion,
-            body: draftText,
-            sessionId: WEB_SESSION,
-            turnId: WEB_TURN,
-          }),
+        const data = await saveSpecPlanRevision({
+          planId: selectedPlan,
+          basedOn: openVersion,
+          body: draftText,
+          sessionId: WEB_SESSION,
+          turnId: WEB_TURN,
         });
-        const data = await response.json();
         if (!data.ok) {
           setError(String(data.error || 'Save failed'));
           return;
@@ -475,12 +504,7 @@ export default function SpecsPage() {
         setNotice(`Saved plan draft v${data.planVersion}. The previous body is still in the history.`);
         return;
       }
-      const response = await fetch(`/api/specs/${encodeURIComponent(selected)}/revisions`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ basedOn: openVersion, body: draftText }),
-      });
-      const data = await response.json();
+      const data = await saveSpecRevision(selected, openVersion, draftText);
       if (!data.ok) {
         setError(String(data.error || 'Save failed'));
         return;
@@ -498,20 +522,15 @@ export default function SpecsPage() {
     if (!selected || !projectId || !altTitle.trim() || !altBody.trim()) return false;
     const planId = `plan-${Date.now().toString(36)}`;
     try {
-      const response = await fetch('/api/specs/alternative-plan', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          projectId,
-          specId: selected,
-          planId,
-          planTitle: altTitle.trim(),
-          planBody: altBody.trim(),
-          sessionId: WEB_SESSION,
-          turnId: WEB_TURN,
-        }),
+      const data = await createAlternativePlan({
+        projectId,
+        specId: selected,
+        planId,
+        planTitle: altTitle.trim(),
+        planBody: altBody.trim(),
+        sessionId: WEB_SESSION,
+        turnId: WEB_TURN,
       });
-      const data = await response.json();
       if (!data.ok) {
         setError(String(data.error || 'Could not create plan'));
         return false;
@@ -560,12 +579,15 @@ export default function SpecsPage() {
     syncRoute(doc.id, null, 'agreement');
   }
 
-  const current = revisions.find((row) => row.version === openVersion);
-  const currentIndex = revisions.findIndex((row) => row.version === openVersion);
-  const older = currentIndex > 0 ? revisions.slice(0, currentIndex) : [];
-  const base = older.find((row) => row.version === baseChoice) ?? older[older.length - 1] ?? null;
-  const hunks = current && base ? unifiedDiff(base.body, current.body) : [];
-  const diffText = formatUnifiedDiff(hunks);
+  const { current, older, base } = diffSelection(revisions, openVersion, baseChoice);
+  const baseBody = base?.body ?? null;
+  const currentBody = current?.body ?? null;
+  // Typing in the filter re-renders the page; the diff only depends on the two bodies.
+  const hunks = useMemo(
+    () => (baseBody !== null && currentBody !== null ? unifiedDiff(baseBody, currentBody) : []),
+    [baseBody, currentBody],
+  );
+  const diffText = useMemo(() => formatUnifiedDiff(hunks), [hunks]);
   const needle = query.trim().toLowerCase();
   const hierarchyMode = hierarchy !== null;
   const treeRows = hierarchy === null
@@ -576,14 +598,7 @@ export default function SpecsPage() {
       });
   const openPlans: HierarchyPlan[] =
     hierarchy && selected ? plansForSpec(hierarchy, selected) : [];
-  const visible = specs.filter((spec) => {
-    if (kindFilter === 'plan' && spec.kind !== 'plan') return false;
-    if (kindFilter === 'spec' && spec.kind !== 'spec') return false;
-    if (statusFilter !== 'all' && spec.latestStatus !== statusFilter) return false;
-    if (!needle) return true;
-    const haystack = `${spec.title} ${spec.id} ${spec.path} ${spec.sessions}`.toLowerCase();
-    return haystack.includes(needle);
-  });
+  const visible = filterSpecs(specs, kindFilter, statusFilter, query);
   const ordered = sortSpecs(visible, 'newest');
   const windowed = ordered.slice(0, shown);
   useEffect(() => {
@@ -604,7 +619,9 @@ export default function SpecsPage() {
   const bladeHost = typeof document !== 'undefined' ? document.querySelector('.workspace') : null;
 
   function renderEditor(title: string) {
-    if (!current) return null;
+    if (!current) {
+      return docError ? <p role="alert" className="specs-load-error">{docError}</p> : null;
+    }
     const open = current;
     return (
       <SpecsDetail

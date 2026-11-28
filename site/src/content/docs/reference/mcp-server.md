@@ -64,7 +64,7 @@ Opt-in per the section above (e.g. `AX_MCP_TOOLS=all` or `lsp,ship`). Mirror hig
 
 | Tool | Purpose |
 |---|---|
-| `ax_index` | Re-index; optional `force: true` clears and full-indexes (default behaves like `ax_sync`) |
+| `ax_index` | Re-index; optional `force: true` re-extracts every file and then drops files that are gone, without emptying the graph first, so a failed run keeps the previous graph (default behaves like `ax_sync`) |
 | `ax_lsp` | `action: "status"` lists language servers; `action: "enrich"` resolves Exact edges (`limit` optional) — same as `ax lsp status\|enrich` |
 | `ax_ship` | Quality-gate pipeline: `mode: "evaluate"` (default) or `"ci"`. Returns the ship report JSON. For `ci`, MCP `isError` is set when the gate fails — **never** exits the MCP process |
 | `ax_policy_index` | Re-index / import rules and skills from `.agents/` (`force` optional) |
@@ -126,7 +126,7 @@ The [memory vault](/guides/memory/) adds three tools:
 
 | Tool | Purpose |
 |---|---|
-| `ax_remember` | Store a durable memory with `triggers` (CLI: `ax remember --trigger`). The reply includes `suggested_triggers`. Confirm a candidate with `action=confirm` and `id` (CLI: `ax remember --confirm`). |
+| `ax_remember` | Store a durable memory with `triggers` (CLI: `ax remember --trigger`). The reply includes `suggested_triggers`. Confirm a candidate with `action=confirm` and `id` (CLI: `ax remember --confirm`). `action=useful` or `action=wrong` records feedback on a memory; `action=purge` deletes it permanently, so the remote catalog marks the tool destructive. |
 | `ax_recall` | Exact `cue` before free-text `query` (CLI: `ax recall --cue`). `id` returns the body and its cues. `depth=archive` searches old memory and is not injected (CLI: `--depth archive`). `depth=backup` searches `.ax/backups/memory/` snapshots and is not injected (CLI: `--depth backup`). |
 | `ax_history` | When did I change X. `depth=archive` includes demoted turns, graph diffs, and logs (CLI: `ax history --depth archive`). `id` returns one turn in full. |
 
@@ -246,7 +246,7 @@ To watch what each tool receives, how preflight enrichment builds the inject blo
 3. Read today's `<project>/.ax/mcp-verbose-YYYY-MM-DD.log` for the project the agent is connected to. A new file starts each day and earlier days stay on disk. Lines are marked **Inbound** (what a tool received), **Outbound** (what ax sent back) or **Internal**.
 4. For a remote Ax, the **Logging** page of [ax-admin](/guides/remote-admin/) lists the MCP calls that environment handled: time, tool, result, duration and size. It needs the admin grant.
 
-![ax-admin — the Logging page with MCP calls](/screenshots/ax-admin-logging.png)
+![ax-admin — the MCP call log of an environment](/screenshots/ax-admin-logging.png)
 
 5. Score the session with `ax mcp audit`: correlation, enrichment, tool mix and findings, saved to `.ax/audit/latest.json`. Install `ax savings hook install` for `session=` tags.
 6. In Cursor, optionally also use **View → Output → ax / MCP Logs**.
@@ -255,7 +255,7 @@ The full ax, which is being phased out, also has a live Logging page and a Quali
 
 MCP lines are prefixed with `[ax-mcp]`. From **ax 8.4.4**, matching CLI graph/policy/memory commands write the same `inbound tool=` / `outbound tool=` bodies with an `[ax]` brand into the same daily file, so Logging is not MCP-only. Lines never append debug text to `content.text` or `structuredContent`. When a Cursor session id is known, lines also include `session=<uuid>` so `ax mcp audit --session <uuid>` can filter the verbose log.
 
-`ax_guard` accepts the documented `path` + `operation` shape and common aliases (`paths[]`, `file`, `action=edit|write|delete`) so agents do not burn retries on `path required` validation errors.
+`ax_guard` accepts the documented `path` + `operation` shape and common aliases (`paths[]`, `file`, `action=edit|write|delete`) so agents do not burn retries on `path required` validation errors. When no `content` is passed, `ax_guard` and `ax_diagnostics` read the file for content rules only when the path names a regular file inside the project (relative, or absolute under the project root) of at most 2 MB that does not leave the project through `..` or a symbolic link. Any other path is checked by path alone.
 
 ### Response budget environment variables
 
@@ -270,6 +270,8 @@ MCP lines are prefixed with `[ax-mcp]`. From **ax 8.4.4**, matching CLI graph/po
 | `AX_CONTEXT_MAX_BLOCK_CHARS` | 1200 | Max characters per `ax_context` code block |
 
 Explicit tool params (`maxLinesPerSnippet`, `maxSourceChars`) still override the env defaults per call.
+
+Caller-supplied sizes have upper bounds; a larger value is lowered to the bound. `ax_explore` and `ax_node` take at most `limit` 50, `depth` 6, `maxLinesPerSnippet` 2000 and `maxSourceChars` 200000. `ax_cycles` and `ax_api` return at most 500 rows. `ax_search` takes `limit` (default 20, at most 100); `ax_callers`, `ax_callees` and `ax_impact` take `depth` (default 3, at most 6).
 
 ## Architecture tools
 
@@ -322,6 +324,10 @@ Enforcement lives in `crates/ax-context/tests/no_query_time_disk_reads.rs`, a fa
 ## Shared daemon (multi-client)
 
 `ax serve --mcp` prefers a **per-project daemon**: the IDE process is a thin stdio proxy; one daemon owns `.ax/ax.db`. That lets several IDEs share one writer.
+
+The daemon listens on a Unix socket (`.ax/daemon.sock`; when that path is too long, one in `$XDG_RUNTIME_DIR` on Linux or the temp directory otherwise) or, on Windows, a named pipe. Only when no socket can be bound does it listen on TCP `127.0.0.1` instead. A TCP daemon writes a random token to `.ax/daemon.json`, which is readable by its owner only, and every TCP client must send that token as its first line; any other first line (an HTTP request from a web page, for example) closes the connection before anything is answered or run. A failed accept, for example when the process runs out of file descriptors, is logged and retried; it never starts a second daemon in the same process.
+
+All connected clients share the daemon's engine. It runs one request at a time and is released before the answer is written, so a client that stops reading its answers does not hold up the others. A client that has not taken an answer within 60 seconds is disconnected; its proxy reconnects.
 
 When the daemon stops (an upgrade replaced its binary, it was restarted, it crashed), each proxy reconnects to the next daemon, or starts one, on the same stdio connection. Requests that were in flight get the JSON-RPC error `-32000` `ax daemon restarted; retry the call`; requests sent during the reconnect are delivered in order. A proxy on a newer `ax` build restarts an older daemon on its own binary; an older proxy attaches to a newer daemon. See [`ax daemon`](/reference/cli/#ax-daemon-path-statusstoprestart).
 

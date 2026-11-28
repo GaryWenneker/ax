@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   BusyLabel,
@@ -10,9 +10,12 @@ import {
   PageToasts,
 } from '../components/ui/PageLayout';
 import { Spinner } from '../components/ui/Spinner';
+import { SettingRow, Toggle } from '../components/ui/SettingsControls';
+import { DEFAULT_SHIP_CONFIG as DEFAULT_CONFIG } from '../lib/shipDefaults';
 import { usePageContext } from '../context/UiContext';
-import { DEFAULT_SONAR_CONFIG, SONAR_GUIDE_SECTIONS } from '../lib/sonarGuide';
+import { SONAR_GUIDE_SECTIONS } from '../lib/sonarGuide';
 import type { SonarTab } from '../lib/routes';
+import { frameStateAfter, type SonarFrameState } from '../lib/sonarFrame';
 import SettingsSelect from '../components/ui/SettingsSelect';
 import {
   bootstrapSonar,
@@ -21,6 +24,7 @@ import {
   fetchSonarUiInfo,
   regenerateSonarToken,
   saveShipConfig,
+  updateShipConfig,
   SONAR_UI_PROXY,
   streamSonarInstall,
   streamSonarStart,
@@ -32,24 +36,6 @@ import {
   type SonarStreamEvent,
 } from '../shipApi';
 
-const DEFAULT_CONFIG: ShipConfig = {
-  ship: { target_branch: 'main', web_port: 7070, git_root: '', git_roots: [] },
-  quality_gate: {
-    steps: ['index', 'tia', 'tests', 'sonar', 'policy'],
-    tests: { runner: 'cargo test' },
-    index_mode: 'incremental',
-  },
-  remote: { provider: 'azure_devops' },
-  sonar: { ...DEFAULT_SONAR_CONFIG },
-  ui: {
-    show_savings: true,
-    show_agent_terminal: true,
-    verbose_mcp: true,
-    timezone: '',
-  },
-  reviewers: {},
-};
-
 
 function StatusSkeleton() {
   return (
@@ -58,56 +44,6 @@ function StatusSkeleton() {
         <div key={i} className="skeleton-line skeleton-line--status" />
       ))}
     </div>
-  );
-}
-
-function SettingRow({
-  title,
-  description,
-  locked,
-  children,
-}: {
-  title: ReactNode;
-  description?: string;
-  locked?: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="settings-row">
-      <div className="settings-row-label">
-        <span className="settings-row-title">{title}</span>
-        {description && <span className="settings-row-desc">{description}</span>}
-        {locked && <span className="settings-row-locked">{locked}</span>}
-      </div>
-      <div className="settings-row-control">{children}</div>
-    </div>
-  );
-}
-
-function Toggle({
-  checked,
-  onChange,
-  label,
-  disabled = false,
-}: {
-  checked: boolean;
-  onChange: (value: boolean) => void;
-  label: string;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      aria-disabled={disabled}
-      disabled={disabled}
-      className={`settings-toggle${checked ? ' on' : ''}${disabled ? ' disabled' : ''}`}
-      onClick={() => !disabled && onChange(!checked)}
-    >
-      <span className="settings-toggle-thumb" />
-    </button>
   );
 }
 
@@ -189,9 +125,12 @@ export default function SonarQubePage({
   onTabChange: (tab: SonarTab) => void;
 }) {
   const [iframeKey, setIframeKey] = useState(0);
-  const [iframeState, setIframeState] = useState<'loading' | 'loaded' | 'error'>('loading');
+  const [iframeState, setIframeState] = useState<SonarFrameState>('loading');
   const [config, setConfig] = useState<ShipConfig>(DEFAULT_CONFIG);
   const [configLoaded, setConfigLoaded] = useState(false);
+  /** The ship config was read from the server. Until then `config` holds built-in
+   *  defaults, so nothing that writes ship.toml may run. */
+  const [configOk, setConfigOk] = useState(false);
   const [discovery, setDiscovery] = useState<SonarDiscovery | null>(null);
   const [sonarSetup, setSonarSetup] = useState<SonarSetupStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -348,6 +287,7 @@ export default function SonarQubePage({
       });
       setDiscovery(d.sonar);
       if (d.sonar_setup) setSonarSetup(d.sonar_setup);
+      setConfigOk(true);
       setConfigLoaded(true);
 
       // Live discovery in background — do not block the iframe.
@@ -376,6 +316,7 @@ export default function SonarQubePage({
   }, [loadShipAndSonar]);
 
   async function save(nextConfig: ShipConfig = config) {
+    if (!configOk) return;
     setBusy('save');
     setErr(null);
     setMsg(null);
@@ -393,12 +334,12 @@ export default function SonarQubePage({
   }
 
   async function setSonarEnabled(enabled: boolean) {
-    const next = { ...config, sonar: { ...config.sonar, enabled } };
-    setConfig(next);
+    if (!configOk) return;
+    setConfig((c) => ({ ...c, sonar: { ...c.sonar, enabled } }));
     setErr(null);
     setMsg(null);
     try {
-      await saveShipConfig(next);
+      await updateShipConfig((c) => ({ ...c, sonar: { ...c.sonar, enabled } }));
       setMsg(enabled ? 'SonarQube enabled for the quality gate' : 'SonarQube disabled');
     } catch (e) {
       setConfig((c) => ({ ...c, sonar: { ...c.sonar, enabled: !enabled } }));
@@ -471,6 +412,7 @@ export default function SonarQubePage({
   }
 
   async function regenerateToken() {
+    if (!configOk) return;
     setBusy('regenerate-token');
     setErr(null);
     setMsg(null);
@@ -489,6 +431,7 @@ export default function SonarQubePage({
   }
 
   async function setupSonar() {
+    if (!configOk) return;
     setBusy('bootstrap');
     setErr(null);
     setMsg(null);
@@ -662,8 +605,8 @@ export default function SonarQubePage({
               title="SonarQube dashboard"
               src={dashboardEntry}
               referrerPolicy="no-referrer"
-              onLoad={() => setIframeState('loaded')}
-              onError={() => setIframeState('error')}
+              onLoad={() => setIframeState((state) => frameStateAfter(state, 'load'))}
+              onError={() => setIframeState((state) => frameStateAfter(state, 'error'))}
             />
           </div>
         </section>
@@ -696,7 +639,7 @@ export default function SonarQubePage({
               <Toggle
                 label="Enable SonarQube"
                 checked={config.sonar.enabled}
-                disabled={!!busy}
+                disabled={!!busy || !configOk}
                 onChange={setSonarEnabled}
               />
             </SettingRow>
@@ -887,19 +830,19 @@ export default function SonarQubePage({
               </button>
             )}
             {canRegenerateToken && (
-              <button type="button" className="btn primary" disabled={!!busy} onClick={regenerateToken}>
+              <button type="button" className="btn primary" disabled={!!busy || !configOk} onClick={regenerateToken}>
                 {busy === 'regenerate-token' ? 'Regenerating…' : 'Regenerate token'}
               </button>
             )}
             {needsBootstrap && (
-              <button type="button" className="btn primary" disabled={!!busy} onClick={setupSonar}>
+              <button type="button" className="btn primary" disabled={!!busy || !configOk} onClick={setupSonar}>
                 {busy === 'bootstrap' ? 'Setting up…' : 'Setup project & token'}
               </button>
             )}
             <button type="button" className="btn btn-subtle" disabled={!!busy} onClick={refreshDiscovery}>
               Refresh status
             </button>
-            <button type="button" className="btn primary" disabled={!!busy} onClick={() => void save()}>
+            <button type="button" className="btn primary" disabled={!!busy || !configOk} onClick={() => void save()}>
               {busy === 'save' ? <BusyLabel label="Saving…" /> : 'Save SonarQube settings'}
             </button>
           </div>

@@ -231,6 +231,19 @@ impl Database {
         current.is_some() && current != self.opened_inode
     }
 
+    /// Maintenance for a scoped (incremental) run: `PRAGMA optimize` only
+    /// re-analyzes tables whose statistics drifted, instead of a full
+    /// `ANALYZE` of the whole database, then checkpoints the WAL.
+    pub async fn run_light_maintenance(&self) -> Result<(), AxError> {
+        with_busy_retry(|| async {
+            sqlx::query("PRAGMA optimize").execute(&self.pool).await?;
+            checkpoint_truncate_nowait(&self.pool).await
+        })
+        .await
+        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))
+    }
+
+    /// Full maintenance for a project-wide run: `ANALYZE` plus a WAL checkpoint.
     pub async fn run_maintenance(&self) -> Result<(), AxError> {
         with_busy_retry(|| async {
             sqlx::query("ANALYZE").execute(&self.pool).await?;

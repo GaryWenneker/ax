@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { conversationLinks } from '../memoryConversation';
-import { memoryListChanged } from '../memoryRefresh';
+import {
+  MEMORY_PAGE,
+  appendMemoryPage,
+  fetchMemoryWindow,
+  memoryListChanged,
+  memorySourceCounts,
+  pickSelectedMemory,
+} from '../memoryRefresh';
 import { SessionHop } from '../components/SessionHop';
 import { useLive, useNewKeys } from '../lib/useLive';
 import { createPortal } from 'react-dom';
@@ -9,6 +16,7 @@ import {
   createMemory,
   deleteMemory,
   fetchMemories,
+  fetchMemory,
   fetchMemoryFileChanges,
   fetchMemoryFileLinks,
   fetchMemoryRelated,
@@ -21,6 +29,7 @@ import {
   type MemoryRow,
 } from '../api';
 import Codicon from '../components/Codicon';
+import { recallStillApplies } from '../lib/recallGate';
 import ImageLightbox from '../components/ImageLightbox';
 import { MemoryDiffHover } from '../components/MemoryDiffHover';
 import MarkdownPreview from '../components/MarkdownPreview';
@@ -55,7 +64,6 @@ import { memoryTierLabel, recalledFromArchiveLabel } from '../memoryTier';
 import { useNow } from '../lib/useNow';
 import { wikiLinksToMarkdown, type ItemLinks } from '../wikilinks';
 import { MEMORY_CATEGORIES, memoryCategory } from '../memoryCategory';
-import { useTheme } from '../hooks/useTheme';
 import { usePageContext } from '../context/UiContext';
 import { formatInstantInZone, browserTimeZone } from '../lib/timeZone';
 import { parseLocation } from '../lib/routes';
@@ -86,7 +94,6 @@ function rowTagLabels(source: string | undefined, tags: string[]): { shown: stri
 
 export default function MemoryPage() {
   const now = useNow();
-  const portal = useTheme().layout === 'portal';
   const [memories, setMemories] = useState<MemoryRow[]>([]);
   const [matches, setMatches] = useState<MemoryMatch[] | null>(null);
   const [total, setTotal] = useState(0);
@@ -99,7 +106,10 @@ export default function MemoryPage() {
   const [inboxIds, setInboxIds] = useState<Set<string>>(new Set());
   const [health, setHealth] = useState<{ schemaVersion: number; memories: number; staleOrOrphanAnchors: number; lastBackup: string | null } | null>(null);
   const [selectedId, setSelectedId] = useState(() => parseLocation().memoryId ?? '');
+  /** The selected memory fetched by id when it is not among the loaded rows. */
+  const [fetchedSelected, setFetchedSelected] = useState<MemoryRow | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
@@ -117,13 +127,26 @@ export default function MemoryPage() {
     setLoading(true);
     setError(null);
     const session = sessionFilter;
-    fetchMemories({ limit: 200, session: session || undefined })
+    fetchMemories({ limit: MEMORY_PAGE, session: session || undefined })
       .then((page) => {
         setMemories(page.memories);
         setTotal(page.total);
         setLoading(false);
       })
       .catch((e: Error) => { setError(e.message); setLoading(false); });
+  }
+
+  function loadMore() {
+    setLoadingMore(true);
+    const session = sessionFilter;
+    fetchMemories({ limit: MEMORY_PAGE, offset: memories.length, session: session || undefined })
+      .then((page) => {
+        if (session !== sessionFilterRef.current) return;
+        setMemories((prev) => appendMemoryPage(prev, page.memories));
+        setTotal(page.total);
+      })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoadingMore(false));
   }
 
   useEffect(() => { loadAll(); }, [sessionFilter]);
@@ -167,8 +190,13 @@ export default function MemoryPage() {
 
   const qRef = useRef(q);
   qRef.current = q;
+  const sessionFilterRef = useRef(sessionFilter);
+  sessionFilterRef.current = sessionFilter;
+  const loadedCountRef = useRef(memories.length);
+  loadedCountRef.current = memories.length;
   const archiveRef = useRef(archiveOn);
   archiveRef.current = archiveOn;
+  const currentRecallInputs = () => ({ q: qRef.current, archive: archiveRef.current, session: sessionFilterRef.current });
   const refreshRef = useRef<() => void>(() => {});
   useLive('memory', () => refreshRef.current());
   const fresh = useNewKeys(loading ? null : memories.map((m) => m.id));
@@ -177,7 +205,10 @@ export default function MemoryPage() {
     function refreshQuietly() {
       if (document.hidden) return;
       const session = new URLSearchParams(window.location.search).get('session') ?? '';
-      fetchMemories({ limit: 200, session: session || undefined })
+      // Reload every row loaded so far, so "Load more" pages stay on screen.
+      fetchMemoryWindow(Math.max(MEMORY_PAGE, loadedCountRef.current), (limit, offset) =>
+        fetchMemories({ limit, offset, session: session || undefined }),
+      )
         .then((page) => {
           setMemories((prev) => (memoryListChanged(prev, page.memories) ? page.memories : prev));
           setTotal(page.total);
@@ -185,9 +216,10 @@ export default function MemoryPage() {
         .catch(() => {});
       const query = qRef.current.trim();
       if (!query || session) return;
-      recallMemories(query, 25, archiveRef.current ? 'archive' : 'hot')
+      const sent = { q: query, archive: archiveRef.current, session: '' };
+      recallMemories(query, 25, sent.archive ? 'archive' : 'hot')
         .then((r) => {
-          if (qRef.current.trim() !== query) return;
+          if (!recallStillApplies(sent, currentRecallInputs())) return;
           setMatches((prev) => (prev && !memoryListChanged(prev, r.matches) ? prev : r.matches));
         })
         .catch(() => {});
@@ -209,10 +241,15 @@ export default function MemoryPage() {
     }
     if (debounce.current) clearTimeout(debounce.current);
     if (!q.trim()) { setMatches(null); return; }
+    const sent = { q, archive: archiveOn, session: '' };
     debounce.current = setTimeout(() => {
       recallMemories(q, 25, archiveOn ? 'archive' : 'hot')
-        .then((r) => setMatches(r.matches))
-        .catch((e: Error) => setError(e.message));
+        .then((r) => {
+          if (recallStillApplies(sent, currentRecallInputs())) setMatches(r.matches);
+        })
+        .catch((e: Error) => {
+          if (recallStillApplies(sent, currentRecallInputs())) setError(e.message);
+        });
     }, 300);
     return () => { if (debounce.current) clearTimeout(debounce.current); };
   }, [q, archiveOn, sessionFilter]);
@@ -279,6 +316,7 @@ export default function MemoryPage() {
       await deleteMemory(id);
       setMemories((prev) => prev.filter((m) => m.id !== id));
       setMatches((prev) => (prev ? prev.filter((m) => m.id !== id) : prev));
+      setFetchedSelected((prev) => (prev?.id === id ? null : prev));
       if (selectedId === id) setSelectedId('');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Delete failed');
@@ -291,6 +329,7 @@ export default function MemoryPage() {
       const patch = (m: MemoryRow) => (m.id === id ? { ...m, enabled } : m);
       setMemories((prev) => prev.map(patch));
       setMatches((prev) => (prev ? prev.map((m) => ({ ...m, ...patch(m) })) : prev));
+      setFetchedSelected((prev) => (prev ? patch(prev) : prev));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Update failed');
     }
@@ -305,7 +344,23 @@ export default function MemoryPage() {
   );
   const archiveSearch = matches !== null && archiveOn;
   const convLinks = useMemo(() => conversationLinks(shown), [shown]);
-  const selected = shown.find((m) => m.id === selectedId) ?? null;
+  const selectedListed = !selectedId || shown.some((m) => m.id === selectedId);
+  const selected = pickSelectedMemory(shown, selectedId, fetchedSelected);
+
+  // A deep link or a related memory can point outside the loaded rows: fetch it by id.
+  useEffect(() => {
+    if (selectedListed || fetchedSelected?.id === selectedId) return;
+    let cancelled = false;
+    fetchMemory(selectedId)
+      .then((m) => { if (!cancelled) setFetchedSelected(m); })
+      .catch(() => { if (!cancelled) setFetchedSelected(null); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refetch only when the selection or its listing changes
+  }, [selectedId, selectedListed]);
+
+  const listing = matches === null || !!sessionFilter;
+  const canLoadMore = listing && memories.length < total;
+  const inboxNotLoaded = inboxFilter === 'all' ? 0 : [...inboxIds].filter((id) => !pool.some((m) => m.id === id)).length;
 
   useEffect(() => {
     if (!selectedId || composerOpen) return;
@@ -318,11 +373,9 @@ export default function MemoryPage() {
 
   usePageContext('Memory', `${total} memories${q ? ` · "${q}"` : ''}`);
 
-  const gitCount = memories.filter((m) => m.source === 'git').length;
-  const cliTurnCount = memories.filter((m) => m.source === 'cli-turn').length;
-  const manualCount = memories.filter(
-    (m) => m.source !== 'git' && m.source !== 'cli-turn',
-  ).length;
+  const { git: gitCount, cliTurn: cliTurnCount, manual: manualCount } = memorySourceCounts(memories);
+  /** Source counts cover the loaded rows; say so while older ones are not loaded. */
+  const countScope = memories.length < total ? ` · of ${memories.length.toLocaleString()} loaded` : '';
 
   return (
     <PageShell className="memory-page">
@@ -490,7 +543,7 @@ export default function MemoryPage() {
           <div className="mem-stat">
             <span className="mem-stat-value">{gitCount}</span>
             <span className="mem-stat-label">
-              from git
+              from git{countScope}
               <InfoHover label="About git memories">
                 Memories automatically extracted from git commit history. Each captures the commit
                 message, the files touched, and the approximate time — giving agents historical
@@ -501,7 +554,7 @@ export default function MemoryPage() {
           <div className="mem-stat">
             <span className="mem-stat-value">{manualCount}</span>
             <span className="mem-stat-label">
-              manual / agent
+              manual / agent{countScope}
               <InfoHover label="About manual memories">
                 Memories created by you via "New memory" or by agents via <code>ax_remember</code>.
                 These are typically higher-value: architecture decisions, conventions, bug root
@@ -512,7 +565,7 @@ export default function MemoryPage() {
           <div className="mem-stat">
             <span className="mem-stat-value">{cliTurnCount}</span>
             <span className="mem-stat-label">
-              cli turns
+              cli turns{countScope}
               <InfoHover label="About CLI turn memories">
                 Research turns finished with <code>ax turn finish</code> (CLI-only or agent loop
                 without IDE hooks). Stored with <code>source=cli-turn</code> in the same vault as
@@ -542,7 +595,8 @@ export default function MemoryPage() {
           description={`${total.toLocaleString()} memories in ax.db. Hybrid search: full-text + vector similarity with confidence decay.`}
           info={
             <InfoHover label="About the vault">
-              This is the full list of stored memories, newest first. Use the search box to
+              The vault lists stored memories newest first, {MEMORY_PAGE} at a time; use
+              <strong> Load more</strong> for older ones. Use the search box to
               <strong> recall</strong> — it runs the same hybrid search that agents use during
               preflight. Click any memory to see its full content, files, and metadata. You can
               delete memories that are no longer relevant.
@@ -605,8 +659,8 @@ export default function MemoryPage() {
               </PageEmpty>
             ) : (
               <>
-              <ItemList className={`memory-vault-list${portal ? ' portal-data-list portal-memory-list' : ''}`}>
-                    {portal && <div className="portal-data-header"><span>Title</span><span>Kind</span><span>Source</span><span>Updated</span><span>Enabled</span></div>}
+              <ItemList className="memory-vault-list portal-data-list portal-memory-list">
+                    <div className="portal-data-header"><span>Title</span><span>Kind</span><span>Source</span><span>Updated</span><span>Enabled</span></div>
                     {shown.map((m, i) => {
                       const tags = rowTagLabels(m.source, m.tags);
                       const age = memoryRowAge(m.updated_at, now);
@@ -624,7 +678,7 @@ export default function MemoryPage() {
                         style={conv ? ({ '--conv-hue': conv.hue } as CSSProperties) : undefined}
                         title={memoryRowHeadline(m)}
                         listValues={[memoryRowHeadline(m), m.kind.replace(/_/g, ' '), memoryTierLabel(m.tier), m.source || '—', fmtMemoryTime(m.updated_at, now), m.enabled !== false ? 'enabled' : 'disabled']}
-                        portalColumns={portal ? [m.kind.replace(/_/g, ' '), m.source || '—', age] : undefined}
+                        portalColumns={[m.kind.replace(/_/g, ' '), m.source || '—', age]}
                         portalLabels={['Kind', 'Source', 'Age']}
                         meta={age}
                         metaTitle={fmtMemoryTime(m.updated_at, now)}
@@ -714,6 +768,20 @@ export default function MemoryPage() {
                     })}
               </ItemList>
               </>
+            )}
+            {!loading && canLoadMore && (
+              <div className="memory-load-more">
+                {inboxNotLoaded > 0 && (
+                  <span className="mem-stat-label">
+                    {inboxNotLoaded} more in this inbox {inboxNotLoaded === 1 ? 'is' : 'are'} not loaded yet.
+                  </span>
+                )}
+                <button type="button" className="btn-secondary" disabled={loadingMore} onClick={loadMore}>
+                  {loadingMore
+                    ? 'Loading…'
+                    : `Load more (${memories.length.toLocaleString()} of ${total.toLocaleString()})`}
+                </button>
+              </div>
             )}
           </PageCardBody>
         </PageCard>

@@ -1,7 +1,9 @@
 import MobileControls from '../components/ui/MobileControls';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { clickableRowProps } from '../lib/clickableRow';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { useLive, useNewKeys } from '../lib/useLive';
+import { applyLatest, createLatestGate, dataAfterFailedLoad } from '../lib/latestLoad';
 import {
   fetchCallTokenDetail,
   fetchSavings,
@@ -223,7 +225,7 @@ function ToolTable({ tools, totalSaved }: { tools: ToolSavingsRow[]; totalSaved:
       <tbody>
         {sorted.map((t) => {
           const share = totalSaved > 0 ? Math.round((t.tokens_saved_est / totalSaved) * 100) : 0;
-          const cat = toolCategory(t.tool);
+          const cat = toolCategory(t.tool, t.graph_calls);
           return (
             <tr key={t.tool} className={cat === 'policy' ? 'sv-row-dim' : undefined}>
               <td>
@@ -359,7 +361,7 @@ function RecentCallsTable({
             ]
               .filter(Boolean)
               .join(' ')}
-            onClick={() => onSelect(r)}
+            {...clickableRowProps(() => onSelect(r), { selected: selectedId === r.id })}
             title="Open token view"
           >
             <td className="mono">{fmtTs(r.created_at)}</td>
@@ -788,39 +790,43 @@ export default function SavingsPage() {
   const [callError, setCallError] = useState<string | null>(null);
   const [quality, setQuality] = useState<QualitySnapshot>(emptyQualitySnapshot);
 
-  const openCallDetail = useCallback(async (row: RecentCallRow) => {
-    if (selectedCallId === row.id) {
-      setSelectedCallId(null);
-      setCallDetail(null);
-      setCallError(null);
-      return;
-    }
-    setSelectedCallId(row.id);
-    setCallLoading(true);
-    setCallError(null);
-    try {
-      setCallDetail(await fetchCallTokenDetail(row.id));
-    } catch (e) {
-      setCallDetail(null);
-      setCallError(String(e));
-    } finally {
-      setCallLoading(false);
-    }
-  }, [selectedCallId]);
+  /** Only the detail for the row selected last may land; closing drops any answer in flight. */
+  const callGate = useRef(createLatestGate());
 
   const closeCallDetail = useCallback(() => {
+    callGate.current.cancel();
     setSelectedCallId(null);
     setCallDetail(null);
     setCallError(null);
+    setCallLoading(false);
   }, []);
 
+  const openCallDetail = useCallback(async (row: RecentCallRow) => {
+    if (selectedCallId === row.id) {
+      closeCallDetail();
+      return;
+    }
+    setSelectedCallId(row.id);
+    setCallDetail(null);
+    setCallLoading(true);
+    setCallError(null);
+    await applyLatest(callGate.current, () => fetchCallTokenDetail(row.id), {
+      value: setCallDetail,
+      error: (e) => setCallError(String(e)),
+      settled: () => setCallLoading(false),
+    });
+  }, [selectedCallId, closeCallDetail]);
+
   const [dataScope, setDataScope] = useState('');
+
+  const loadGate = useRef(createLatestGate());
 
   const load = useCallback(async (quiet = false) => {
     if (period === 'custom' && !from) {
       setError('Pick a start date for custom range.');
       return;
     }
+    const ticket = loadGate.current.begin();
     if (!quiet) setLoading(true);
     setError(null);
     try {
@@ -829,13 +835,16 @@ export default function SavingsPage() {
         from: period === 'custom' ? from : undefined,
         to: period === 'custom' && to ? to : undefined,
       });
+      if (!loadGate.current.isLatest(ticket)) return;
       setDataScope(`${period}|${from}|${to}`);
       setData(summary);
     } catch (e) {
+      if (!loadGate.current.isLatest(ticket)) return;
       setError(String(e));
-      setData(null);
+      // A failed live refresh keeps the dashboard; the next change event retries.
+      setData((shown) => dataAfterFailedLoad(shown, quiet));
     } finally {
-      setLoading(false);
+      if (loadGate.current.isLatest(ticket)) setLoading(false);
     }
   }, [period, from, to]);
 

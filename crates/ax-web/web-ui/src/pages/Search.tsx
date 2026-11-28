@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLive, useNewKeys } from '../lib/useLive';
 import { fetchSearch } from '../api';
+import { applyLatest, createLatestGate } from '../lib/latestLoad';
 import NodeDetailPanel from '../components/NodeDetail';
 import Codicon from '../components/Codicon';
 import {
@@ -44,16 +45,27 @@ export default function SearchPage() {
   const [selectedId, setSelectedId] = usePersistedString('search-selected', '');
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  /** Only the answer for the query typed last may land; clearing the box drops any in flight. */
+  const searchGate = useRef(createLatestGate());
+
   useEffect(() => {
     if (debounce.current) clearTimeout(debounce.current);
-    if (!q.trim()) { setResults([]); setSearched(false); return; }
+    if (!q.trim()) {
+      searchGate.current.cancel();
+      setResults([]);
+      setSearched(false);
+      setLoading(false);
+      return;
+    }
 
     debounce.current = setTimeout(() => {
       setLoading(true);
       setError(null);
-      fetchSearch(q, 40)
-        .then((page) => { setResultsQuery(q); setResults(page.results); setSearched(true); setLoading(false); })
-        .catch((e: Error) => { setError(e.message); setLoading(false); });
+      void applyLatest(searchGate.current, () => fetchSearch(q, 40), {
+        value: (page) => { setResultsQuery(q); setResults(page.results); setSearched(true); },
+        error: (e) => setError(e instanceof Error ? e.message : String(e)),
+        settled: () => setLoading(false),
+      });
     }, 280);
 
     return () => { if (debounce.current) clearTimeout(debounce.current); };
@@ -66,13 +78,16 @@ export default function SearchPage() {
   useLive('graph', () => {
     const query = q;
     if (!query.trim()) return;
-    fetchSearch(query, 40)
-      .then((page) => {
+    void applyLatest(searchGate.current, () => fetchSearch(query, 40), {
+      value: (page) => {
         if (qNow.current !== query) return;
         setResultsQuery(query);
         setResults(page.results);
-      })
-      .catch(() => {});
+        setSearched(true);
+      },
+      // A live refresh replaces a typed search still in flight for the same query.
+      settled: () => setLoading(false),
+    });
   });
 
   const searchDetail = q.trim()

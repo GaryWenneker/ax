@@ -56,6 +56,20 @@ test('five triggers within 400 ms cause exactly one reload', () => {
   assert.equal(calls, 1);
 });
 
+test('a cancelled debouncer never fires its pending call', () => {
+  const { sched, advance } = fakeScheduler();
+  let calls = 0;
+  const trigger = createDebouncer(400, () => calls++, sched);
+  trigger();
+  advance(200);
+  trigger.cancel();
+  advance(1000);
+  assert.equal(calls, 0);
+  trigger();
+  advance(400);
+  assert.equal(calls, 1, 'the debouncer still works after a cancel');
+});
+
 test('spark cap: 50 new nodes give 20 sparks and one summary', () => {
   const ids = Array.from({ length: 50 }, (_, i) => `n${i}`);
   const plan = planSparks(ids);

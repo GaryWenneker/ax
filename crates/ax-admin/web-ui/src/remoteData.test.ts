@@ -11,9 +11,9 @@ test('tools keep their name, text, schema and whether they change data', () => {
       { name: 'ax_plain' },
     ]),
     [
-      { name: 'ax_status', description: 'Index stats', inputSchema: schema, readOnly: true },
-      { name: 'ax_index', description: '', inputSchema: undefined, readOnly: false },
-      { name: 'ax_plain', description: '', inputSchema: undefined, readOnly: true },
+      { name: 'ax_status', description: 'Index stats', inputSchema: schema, readOnly: true, admin: false },
+      { name: 'ax_index', description: '', inputSchema: undefined, readOnly: false, admin: false },
+      { name: 'ax_plain', description: '', inputSchema: undefined, readOnly: true, admin: false },
     ],
   );
 });
@@ -26,7 +26,22 @@ test('odd tool entries are dropped instead of breaking a page', () => {
     { name: 'ax_ok', description: { html: '<b>x</b>' }, annotations: 'nope' },
     { name: 'ax_ok', description: 'a second entry with the same name' },
   ]);
-  assert.deepEqual(tools, [{ name: 'ax_ok', description: '', inputSchema: undefined, readOnly: true }]);
+  assert.deepEqual(tools, [{ name: 'ax_ok', description: '', inputSchema: undefined, readOnly: true, admin: false }]);
+});
+
+test('a tool is an admin tool when the server asks for the ax:admin scope', () => {
+  const schemes = (scopes: unknown) => [{ type: 'oauth2', scopes }];
+  const tools = toolsFrom([
+    { name: 'ax_compact', securitySchemes: schemes(['ax:context', 'ax:write', 'ax:admin']) },
+    { name: 'ax_meta_only', _meta: { securitySchemes: schemes(['ax:admin']) } },
+    { name: 'ax_status', securitySchemes: schemes(['ax:context']) },
+    { name: 'ax_odd', securitySchemes: [null, { scopes: 'ax:admin' }, 'ax:admin'] },
+    { name: 'ax_plain' },
+  ]);
+  assert.deepEqual(
+    tools.map((t) => [t.name, t.admin]),
+    [['ax_compact', true], ['ax_meta_only', true], ['ax_status', false], ['ax_odd', false], ['ax_plain', false]],
+  );
 });
 
 test('a log page keeps well-formed rows and the cursor', () => {

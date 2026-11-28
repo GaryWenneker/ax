@@ -1,5 +1,6 @@
 import {useEffect} from 'react';
 import useMobile from '../hooks/useMobile';
+import {coalesceToFrame} from '../lib/frameCoalesce';
 import {containOverlayFocus} from '../lib/overlayFocus';
 
 /** Existing shared inspectors stay mounted, preserving their data and callbacks. */
@@ -31,9 +32,11 @@ export default function MobileDetailLayer() {
         if (oldLabel === null) panel.removeAttribute('aria-label');else panel.setAttribute('aria-label',oldLabel);
       };
     }
-    const observer = new MutationObserver(update);
+    // A streaming page adds rows constantly; scan and measure at most once per frame.
+    const scheduled = coalesceToFrame(update);
+    const observer = new MutationObserver(scheduled.request);
     observer.observe(document.body,{childList:true,subtree:true});update();
-    return () => {observer.disconnect();release?.();};
+    return () => {observer.disconnect();scheduled.cancel();release?.();};
   }, [mobile]);
   return null;
 }

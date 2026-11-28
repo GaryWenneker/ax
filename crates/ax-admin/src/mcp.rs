@@ -17,18 +17,25 @@ pub const CALL_TIMEOUT: Duration = Duration::from_secs(130);
 /// large project, and reports over it, can run for minutes.
 pub const ADMIN_CALL_TIMEOUT: Duration = Duration::from_secs(600);
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
-/// The tools the remote server offers only with the admin grant.
-pub const ADMIN_TOOLS: &[&str] = &[
-    "ax_sync",
-    "ax_index",
-    "ax_policy_index",
-    "ax_files",
-    "ax_cost",
-    "ax_tool_economics",
-    "ax_budget",
-    "ax_optimization_advice",
-    "ax_logs",
-];
+/// The scope the remote server asks for on a tool that needs the admin grant.
+pub const ADMIN_SCOPE: &str = "ax:admin";
+
+/// Whether the server lists `tool` (one `tools/list` entry) as needing its
+/// admin grant: one of its security schemes, at the top level or in `_meta`,
+/// asks for [`ADMIN_SCOPE`].
+pub fn requires_admin(tool: &Value) -> bool {
+    [
+        tool.get("securitySchemes"),
+        tool.pointer("/_meta/securitySchemes"),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(Value::as_array)
+    .flatten()
+    .filter_map(|scheme| scheme.get("scopes").and_then(Value::as_array))
+    .flatten()
+    .any(|scope| scope == ADMIN_SCOPE)
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum McpError {
@@ -131,9 +138,9 @@ pub struct Limits {
 }
 
 impl Limits {
-    /// How long a call to `tool` may take.
-    pub fn call_timeout(&self, tool: &str) -> Duration {
-        if ADMIN_TOOLS.contains(&tool) {
+    /// How long a call to `tool` (its `tools/list` entry) may take.
+    pub fn call_timeout(&self, tool: &Value) -> Duration {
+        if requires_admin(tool) {
             self.admin_call
         } else {
             self.call
@@ -174,7 +181,9 @@ pub struct Remote {
     http: reqwest::Client,
     tokens: Arc<dyn TokenSource>,
     limits: Limits,
-    session: Mutex<Option<Session>>,
+    /// Shared, so a failed request can tell whether the cached session is
+    /// still the one it used (`Arc::ptr_eq`).
+    session: Mutex<Option<Arc<Session>>>,
     tools: Mutex<Option<Vec<Value>>>,
 }
 
@@ -387,18 +396,30 @@ impl Remote {
         Ok(session)
     }
 
-    async fn session(&self, token: &str) -> Result<Session, McpError> {
+    async fn session(&self, token: &str) -> Result<Arc<Session>, McpError> {
         let mut guard = self.session.lock().await;
         if let Some(session) = guard.as_ref() {
             return Ok(session.clone());
         }
-        let session = self.initialize(token).await?;
+        let session = Arc::new(self.initialize(token).await?);
         *guard = Some(session.clone());
         Ok(session)
     }
 
     async fn forget_session(&self) {
         *self.session.lock().await = None;
+    }
+
+    /// Drops the cached session only while it is still `used`. Another request
+    /// may already have replaced it with a fresh one, which is kept.
+    async fn forget_session_if(&self, used: &Arc<Session>) {
+        let mut guard = self.session.lock().await;
+        if guard
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, used))
+        {
+            *guard = None;
+        }
     }
 
     /// One JSON-RPC request. An expired transport session is re-opened once,
@@ -408,7 +429,7 @@ impl Remote {
         method: &str,
         params: Value,
         timeout: Duration,
-    ) -> Result<(Value, Session), McpError> {
+    ) -> Result<(Value, Arc<Session>), McpError> {
         let mut retried_session = false;
         let mut retried_token = false;
         loop {
@@ -417,8 +438,11 @@ impl Remote {
                 .token(retried_token)
                 .await
                 .map_err(McpError::Credential)?;
+            // The session this request was sent with; None when opening one failed.
+            let mut used = None;
             let outcome = match self.session(&token).await {
                 Ok(session) => {
+                    used = Some(session.clone());
                     let body =
                         json!({"jsonrpc": "2.0", "id": 2, "method": method, "params": params});
                     self.post(&token, Some(&session), &body, timeout)
@@ -428,21 +452,18 @@ impl Remote {
                 }
                 Err(e) => Err(e),
             };
-            match outcome {
-                Err(McpError::UnknownProject) if !retried_session => {
-                    // With a session header, 404 means the session expired.
-                    let had_session = self.session.lock().await.is_some();
-                    if !had_session {
-                        return Err(McpError::UnknownProject);
-                    }
+            match (outcome, used) {
+                // With a session header, 404 means the session expired. Without
+                // one (the initialize request), the project is unknown.
+                (Err(McpError::UnknownProject), Some(used)) if !retried_session => {
                     retried_session = true;
-                    self.forget_session().await;
+                    self.forget_session_if(&used).await;
                 }
-                Err(McpError::Rejected) if !retried_token && self.tokens.refreshable() => {
+                (Err(McpError::Rejected), _) if !retried_token && self.tokens.refreshable() => {
                     retried_token = true;
                     self.forget_session().await;
                 }
-                other => return other,
+                (other, _) => return other,
             }
         }
     }
@@ -459,14 +480,15 @@ impl Remote {
             .ok_or_else(|| McpError::Protocol("tool list is missing".into()))?;
         *self.tools.lock().await = Some(tools.clone());
         Ok(RemoteInfo {
-            server_name: session.server_name,
-            server_version: session.server_version,
-            protocol_version: session.version,
+            server_name: session.server_name.clone(),
+            server_version: session.server_version.clone(),
+            protocol_version: session.version.clone(),
             tools,
         })
     }
 
-    async fn offers(&self, name: &str) -> Result<bool, McpError> {
+    /// The server's `tools/list` entry for `name`, if it lists the tool.
+    async fn listed(&self, name: &str) -> Result<Option<Value>, McpError> {
         if self.tools.lock().await.is_none() {
             self.info().await?;
         }
@@ -475,16 +497,17 @@ impl Remote {
             .lock()
             .await
             .as_ref()
-            .is_some_and(|tools| tools.iter().any(|tool| tool["name"] == name)))
+            .and_then(|tools| tools.iter().find(|tool| tool["name"] == name).cloned()))
     }
 
     /// Calls a tool the server listed. A tool it did not list is refused here,
-    /// without a request to the server.
+    /// without a request to the server. How long it may take follows what the
+    /// server lists for it (see [`Limits::call_timeout`]).
     pub async fn call_tool(&self, name: &str, arguments: Value) -> Result<Value, McpError> {
-        if !self.offers(name).await? {
+        let Some(tool) = self.listed(name).await? else {
             return Err(McpError::UnknownTool(name.to_owned()));
-        }
-        let timeout = self.limits.call_timeout(name);
+        };
+        let timeout = self.limits.call_timeout(&tool);
         self.rpc(
             "tools/call",
             json!({"name": name, "arguments": arguments}),
@@ -499,22 +522,28 @@ impl Remote {
 mod tests {
     use super::*;
 
+    fn listed(schemes: Value) -> Value {
+        json!({"name": "ax_x", "securitySchemes": schemes.clone(), "_meta": {"securitySchemes": schemes}})
+    }
+
     #[test]
     fn admin_tools_get_ten_minutes_and_other_tools_do_not() {
         let limits = Limits::default();
         assert_eq!(ADMIN_CALL_TIMEOUT, Duration::from_secs(600));
-        assert_eq!(ADMIN_TOOLS.len(), 9);
-        for tool in ADMIN_TOOLS {
-            assert_eq!(limits.call_timeout(tool), ADMIN_CALL_TIMEOUT, "{tool}");
-        }
+        let admin =
+            listed(json!([{"type": "oauth2", "scopes": ["ax:context", "ax:write", "ax:admin"]}]));
+        assert_eq!(limits.call_timeout(&admin), ADMIN_CALL_TIMEOUT);
+        let only_meta =
+            json!({"name": "ax_x", "_meta": {"securitySchemes": [{"scopes": ["ax:admin"]}]}});
+        assert_eq!(limits.call_timeout(&only_meta), ADMIN_CALL_TIMEOUT);
         for tool in [
-            "ax_status",
-            "ax_explore",
-            "ax_remember",
-            "ax_future_tool",
-            "",
+            listed(json!([{"type": "oauth2", "scopes": ["ax:context"]}])),
+            listed(json!([{"type": "oauth2", "scopes": ["ax:context", "ax:write"]}])),
+            listed(json!([{"scopes": "ax:admin"}, null, "ax:admin"])),
+            json!({"name": "ax_logs"}),
+            json!({}),
         ] {
-            assert_eq!(limits.call_timeout(tool), CALL_TIMEOUT, "{tool}");
+            assert_eq!(limits.call_timeout(&tool), CALL_TIMEOUT, "{tool}");
         }
         assert!(CALL_TIMEOUT < ADMIN_CALL_TIMEOUT);
     }

@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { registerPasskey } from '../lib/passkeys';
 import { instantMs, memoryRowAge } from '../memoryHeadline';
 import { useNow } from '../lib/useNow';
+import { runSettingsAction } from '../lib/settingsAction';
 
 type Passkey = { id: string; label: string; created_at: string; revoked: boolean };
 type Status = { enabled: boolean; passkeys: boolean; origin?: string };
@@ -34,24 +35,25 @@ export default function SecuritySettingsSection() {
     } else setSessions([]);
   };
   useEffect(() => { void reload().catch(e => setError(String(e))); }, []);
-  async function execute(fn: () => Promise<unknown>, message: string) {
+  /** Runs `fn`, refreshes, and resolves true only when `fn` succeeded. */
+  async function execute(fn: () => Promise<unknown>, message: string): Promise<boolean> {
     setBusy(true); setError(null); setNotice(null);
     try {
-      await fn(); await reload(); setNotice(message);
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-    finally { setBusy(false); }
+      const result = await runSettingsAction(fn, reload);
+      if (result.ok) setNotice(message);
+      if (result.error) setError(result.error);
+      return result.ok;
+    } finally { setBusy(false); }
   }
   async function setup(event: FormEvent) {
     event.preventDefault();
-    await execute(() => request('/api/web-auth/setup', { method: 'POST', body: JSON.stringify({ password }) }), 'Owner password configured.');
-    setPassword('');
+    if (await execute(() => request('/api/web-auth/setup', { method: 'POST', body: JSON.stringify({ password }) }), 'Owner password configured.')) setPassword('');
   }
   async function toggle() {
     if (!status) return;
     if (status.enabled && !window.confirm('Disable sign-in for local Command Center? Current sessions will be ended.')) return;
-    await execute(() => request('/api/web-auth/config', { method: 'POST',
-      body: JSON.stringify({ enabled: !status.enabled }) }), status.enabled ? 'Sign-in disabled.' : 'Sign-in enabled.');
-    window.dispatchEvent(new Event('ax-web-auth-changed'));
+    if (await execute(() => request('/api/web-auth/config', { method: 'POST',
+      body: JSON.stringify({ enabled: !status.enabled }) }), status.enabled ? 'Sign-in disabled.' : 'Sign-in enabled.')) window.dispatchEvent(new Event('ax-web-auth-changed'));
   }
   async function generateCodes() {
     if (!window.confirm('Regenerate recovery codes? Your previous codes will stop working.')) return;
@@ -62,13 +64,21 @@ export default function SecuritySettingsSection() {
   }
   async function revokeSession(id: string) {
     if (!window.confirm('End this browser session?')) return;
-    await execute(() => request(`/api/web-auth/sessions/${id}`, { method: 'DELETE' }), 'Session ended.');
     const current = sessions.find(session => session.id === id)?.current;
+    if (!await execute(() => request(`/api/web-auth/sessions/${id}`, { method: 'DELETE' }), 'Session ended.')) return;
     if (current) window.dispatchEvent(new Event('ax-web-auth-changed'));
   }
   async function signout() {
-    await execute(() => request('/api/web-auth/logout', { method: 'POST' }), 'Signed out.');
-    window.dispatchEvent(new Event('ax-web-auth-changed'));
+    if (await execute(() => request('/api/web-auth/logout', { method: 'POST' }), 'Signed out.')) window.dispatchEvent(new Event('ax-web-auth-changed'));
+  }
+  async function copyCodes(codes: string[]) {
+    setError(null); setNotice(null);
+    try {
+      await navigator.clipboard.writeText(codes.join('\n'));
+      setNotice('Recovery codes copied.');
+    } catch {
+      setError('Could not copy the recovery codes. Select and copy them by hand.');
+    }
   }
   return <div id="settings-panel-security">
     <section className="settings-card">
@@ -99,9 +109,7 @@ export default function SecuritySettingsSection() {
         {recoveryCodes ? <div role="region" aria-label="New recovery codes" className="access-token">
           <p>These codes are displayed only now. Store them offline. Each code works once.</p>
           <ul>{recoveryCodes.map(code => <li key={code}><code>{code}</code></li>)}</ul>
-          <button className="btn" type="button" onClick={() => {
-            void navigator.clipboard.writeText(recoveryCodes.join('\n'));
-          }}>Copy codes</button>
+          <button className="btn" type="button" onClick={() => void copyCodes(recoveryCodes)}>Copy codes</button>
           <button className="btn" type="button" onClick={() => setRecoveryCodes(null)}>I've saved these codes</button>
         </div> : <button className="btn" type="button" disabled={busy} onClick={() => void generateCodes()}>Generate recovery codes</button>}
       </div>

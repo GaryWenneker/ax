@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { clickableRowProps } from '../lib/clickableRow';
 import { memoryRowAge } from '../memoryHeadline';
 import { useNow } from '../lib/useNow';
 import { useLive } from '../lib/useLive';
@@ -164,7 +165,7 @@ export default function StatsPage() {
                         key={l.language}
                         className="stats-lang-row"
                         title={`Browse ${l.language} symbols`}
-                        onClick={() => browseLanguage(l.language)}
+                        {...clickableRowProps(() => browseLanguage(l.language))}
                       >
                         <td className="mono">{l.language}</td>
                         <td className="num">{l.count.toLocaleString()}</td>

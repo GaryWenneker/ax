@@ -33,10 +33,12 @@ pub async fn call_tool(engine: &mut McpEngine, name: &str, args: Value) -> Resul
         engine.reopen_if_replaced().await?;
     }
     let (args, _, _) = crate::server::prepare_call_args(engine, name, args);
+    engine.wait_for_catch_up(name).await;
     let result = {
         let mut guard = engine.lock_ax().await;
         let ax = guard.as_mut().ok_or("ax not initialized")?;
         ToolHandler::call_tool(ax, name, args).await?
     };
-    Ok(crate::server::record_policy_delivery(engine, result))
+    let result = crate::server::record_policy_delivery(engine, result);
+    Ok(engine.note_catch_up(name, result))
 }

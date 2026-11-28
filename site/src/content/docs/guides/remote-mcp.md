@@ -50,11 +50,13 @@ Initialize each project normally with `ax init`. Create a private JSON configura
 ```
 
 - `public_url` is the stable external HTTPS origin, without a path or query. It is also the OAuth resource/audience. Local ephemeral port numbers never become the public resource identifier.
-- `issuer` must exactly match the access token's `iss`, including a significant trailing slash. The configured JWKS endpoint supplies public signing keys. This implementation accepts **RS256 JWT access tokens with `kid`**; opaque tokens and other algorithms are not supported.
+- `issuer` must exactly match the access token's `iss`, including a significant trailing slash. The configured JWKS endpoint supplies public signing keys. Ax caches them and refreshes them in the background every five minutes; when the endpoint is slow or down, tokens keep verifying with the cached keys. A token whose `kid` is not in the cache makes Ax fetch the keys once, so a rotated key works right away; such fetches happen at most once every 30 seconds. That token waits at most one second for the fetch, and a token that arrives while a fetch is running is refused at once, so a slow key endpoint never ties up the server for other callers. This implementation accepts **RS256 JWT access tokens with `kid`**; opaque tokens and other algorithms are not supported.
+- `oauth.clock_skew_seconds` (optional, default `60`, at most `300`) is how far the identity provider's clock may differ from the Ax host's when a token's `exp`, `nbf` and `iat` are checked. A token issued by a provider whose clock runs a few seconds ahead is accepted right away. Set it to `0` to check those times exactly.
 - `subjects` grants the named OAuth identities access to this project. No implicit access is granted to other signed-in users.
 - `write_subjects` must be a subset of `subjects`. Memory/policy writes additionally require the `ax:write` token scope.
 - `admin_subjects` (optional) must be a subset of `write_subjects`. See [Admin access](#admin-access).
-- `allowed_origins` accepts explicit HTTPS browser origins. Requests without an Origin header can still come from authenticated native clients; present foreign Origin headers are rejected.
+- `client_address_header` (optional) names the header the proxy in front of Ax sets to the caller's address: `cf-connecting-ip` or `x-forwarded-for`. It only shares out the limits on the unauthenticated sign-in endpoints; leave it out when requests can reach Ax without passing that proxy.
+- `allowed_origins` accepts explicit HTTPS browser origins (scheme, host and optional port; no path, query or fragment). Each entry is compared in its canonical form, so `https://App.Example.com:443` matches the `https://app.example.com` a browser sends. Requests without an Origin header can still come from authenticated native clients; present foreign Origin headers are rejected.
 - Each root must already contain `.ax/ax.db`. Project IDs must be unique and URL-safe. Remote calls cannot override a root.
 
 Start the dedicated remote listener:
@@ -133,7 +135,7 @@ Point the existing tunnel's service at:
 service: unix:/absolute/path/ax-remote.sock
 ```
 
-Ax forwards the socket's HTTP traffic to the actual assigned TCP listener. The socket is owner-only; run `cloudflared` under the same user or arrange an appropriate local permission setup. Ax refuses to overwrite an existing socket. After an unclean shutdown, verify that its owner is stopped before removing a stale socket.
+Ax forwards the socket's HTTP traffic to the actual assigned TCP listener. A socket connection stays open as long as bytes move in either direction; it is closed after ten and a half minutes without traffic, which is longer than the slowest admin tool call. Up to 32 socket connections are forwarded at once; further connections wait for a free slot. The socket is owner-only; run `cloudflared` under the same user or arrange an appropriate local permission setup. Ax refuses to overwrite an existing socket. After an unclean shutdown, verify that its owner is stopped before removing a stale socket.
 
 Windows uses the TCP upstream path; Unix sockets in this feature are macOS/Linux only. Dynamic port allocation addresses listener collisions. It does not guarantee that every VPN, firewall, DNS or routing configuration will allow the tunnel's network connection.
 
@@ -266,7 +268,11 @@ For stdio-only clients, first log in on that laptop, then configure its MCP proc
 }
 ```
 
-The bridge sends authenticated HTTPS requests, preserves JSON-RPC responses, forwards the transport session and refreshes a saved token before expiry when possible. Its logs go to stderr; stdout carries MCP responses only. Expired transport sessions require reconnecting the bridge.
+The bridge sends authenticated HTTPS requests, preserves JSON-RPC responses, forwards the transport session and refreshes a saved token before expiry when possible. Its logs go to stderr; stdout carries MCP responses only.
+
+The bridge keeps running when one request fails. When the server answers with an HTTP error (for example 403 for a tool that is unavailable remotely, 429 when the server is busy, or 503 while the project is re-indexed), the IDE gets a JSON-RPC error for that request with code `-32000`, the server's message and `data.httpStatus`. A line that is not JSON gets a parse error (`-32700`), and a line over 128 KiB gets `-32600`. When the server rejects the token (401), the bridge refreshes it once and retries. When the server no longer knows the session (404), for example after a restart, the bridge starts a new session with the IDE's original `initialize` request and retries.
+
+When a token refresh succeeds at the sign-in provider, the new tokens are saved right away, so a rotated refresh token is never lost. If the Ax server then answers 401 or 403, the refresh reports that the account lost access; if the server is briefly unavailable, the new token is used and the request reports the outage.
 
 An IDE that can securely supply a custom Bearer header can alternatively use a long random API key. Add only its SHA-256 hex hash, a unique key ID and explicit project IDs to `api_keys`:
 
@@ -325,11 +331,11 @@ ChatGPT's documented MCP authentication flow uses Authorization Code + PKCE. It 
 
 ## Tools, projects and conversations
 
-The remote server exposes graph/context retrieval, preflight, rules/skills, scoped conversation context and memory retrieval. `ax_remember` and policy-capture save need both `ax:write` and an explicit write grant. Index, sync, policy reload, the file list, usage reports and the call log need the [admin grant](#admin-access). LSP, ship, global sharing and shell-running tools are unavailable remotely. Listing a smaller catalog does not authorize hidden tool calls: direct calls use the same permission checks. Protected tools advertise OAuth security schemes, and denied write calls return the MCP authentication challenge used by ChatGPT.
+The remote server exposes graph/context retrieval, preflight, rules/skills, scoped conversation context and memory retrieval. `ax_remember` and policy-capture save need both `ax:write` and an explicit write grant. A remote policy save writes only `.agents/rules/<id>.mdc` in the selected project: the rule id must be kebab-case, the scope must be `project`, and frontmatter that picks a location or a storage (`source`, `storage`, `rootId`) or that the rule schema does not know is refused with HTTP 403. Index, sync, policy reload, the file list, usage reports and the call log need the [admin grant](#admin-access). LSP, ship, global sharing and shell-running tools are unavailable remotely. Listing a smaller catalog does not authorize hidden tool calls: direct calls use the same permission checks. Protected tools advertise OAuth security schemes, and denied write calls return the MCP authentication challenge used by ChatGPT.
 
-Each transport session is bound to the authenticated principal and selected project. Project A's session cannot be used on project B or by another principal. Sessions are capped and expire after 30 minutes of inactivity.
+Each transport session is bound to the authenticated principal and selected project. Project A's session cannot be used on project B or by another principal. Sessions expire after 30 minutes of inactivity. One principal (an API key, a client token or a signed-in user) holds at most 8 sessions; a new one closes that principal's least recently used session. The server holds 128 sessions in all. It serves 16 requests at once, and one principal may have at most 4 of them in flight; a call that waits for its own busy session does not hold one of the 16 while it waits. A request takes those slots only after its token is accepted; token checks have their own limit of 32 at once, so requests without a valid token never make the server busy for signed-in callers. `axc_` client tokens are checked against the global database the server opened at startup.
 
-Remote chat IDs are issued by the server. Pass the `session` from preflight on subsequent calls. Omit it for a new chat. Foreign chat IDs are rejected; local Cursor hooks are never used to identify a remote conversation. Keep the returned context hash only while the model still holds its snapshot.
+Remote chat IDs are issued by the server. Pass the `session` from preflight on subsequent calls. Omit it for a new chat. Chat IDs and `ax_expand` cache IDs belong to the principal and project they were issued to, not to one transport session: after a reconnect (an expired session or a client restart) the same principal keeps using them. The server remembers the latest 4096 of each per principal and project, and forgets them when it restarts. A chat or cache ID that this principal was not issued, or that the server no longer knows, gets a tool error (`isError`) that says to omit `session` and start a new chat, or to run the query again. Local Cursor hooks are never used to identify a remote conversation. Keep the returned context hash only while the model still holds its snapshot.
 
 The HTTP endpoint supports Ax's existing **2025-03-26, 2025-06-18 and 2025-11-25** Streamable HTTP behavior with initialize and a transport session. It does not claim the revised 2026-07-28 protocol. POST returns JSON; notifications return empty 202; authenticated DELETE closes the transport session. There is no standalone GET notification stream.
 
@@ -369,10 +375,10 @@ Run native browser login on the laptop that will use the connection: its callbac
 | Result | Meaning and next step |
 |---|---|
 | 401 | Missing/invalid/expired token or wrong signature/issuer/audience. Reauthorize against the advertised issuer/resource. |
-| 403 | Account/project/scope, Origin or chat ownership denied. Inspect the explicit grant and requested scope. |
+| 403 | Account/project/scope or Origin denied. Inspect the explicit grant and requested scope. |
 | 404 for session | Unknown/expired transport session. Reconnect; do not reuse a session from another project. |
 | 400 protocol mismatch | Send the version negotiated by initialize with subsequent requests. |
-| 429 | Session/concurrency limit reached. Close unused sessions or retry after active requests finish. |
+| 429 | Session or request limit reached: the server is busy, or this principal already has 4 requests in flight. Retry after active requests finish. |
 | Credential store unavailable | Unlock/configure the OS credential store. Ax does not write plaintext credentials as a workaround. |
 | Tunnel cannot reach Ax after restart | Update a TCP upstream to the emitted actual port, or use the stable Unix socket option on macOS/Linux. |
 | OAuth works but connection fails | Check Ax's subject/project grant and that the access token targets the configured Ax resource. |

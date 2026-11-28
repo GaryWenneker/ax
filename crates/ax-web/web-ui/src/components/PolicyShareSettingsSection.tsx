@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { memoryRowAge } from '../memoryHeadline';
 import { useNow } from '../lib/useNow';
+import { errorText, saveQuietly, shareFieldDisabled, startSerialPoll } from '../lib/shareSettings';
 
 import ModalShell from './ModalShell';
 import { BusyLabel } from './ui/PageLayout';
@@ -186,11 +187,14 @@ export default function PolicyShareSettingsSection() {
   const [msModal, setMsModal] = useState<DeviceFlowStart | null>(null);
   const [msModalErr, setMsModalErr] = useState<string | null>(null);
   const [msPolling, setMsPolling] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollRef = useRef<{ stop: () => void } | null>(null);
+  // The latest config, for async work that finishes after later edits or reloads.
+  const configRef = useRef(config);
+  configRef.current = config;
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
-      clearInterval(pollRef.current);
+      pollRef.current.stop();
       pollRef.current = null;
     }
     setMsPolling(false);
@@ -229,20 +233,28 @@ export default function PolicyShareSettingsSection() {
     }
   }, [msModal]);
 
-  async function persist(next: ShareConfig, toast?: string) {
+  /** Saves `next`; a failure shows in the error toast and resolves false. */
+  async function persist(next: ShareConfig, toast?: string): Promise<boolean> {
     setBusy('save');
     setErr(null);
     setMsg(null);
-    try {
+    const ok = await saveQuietly(async () => {
       const saved = await saveShareConfig(next);
-      setConfig(mergeConfig(saved));
+      // Text fields stay editable during a save; keep edits typed since it started.
+      if (configRef.current === next) setConfig(mergeConfig(saved));
       setConfigPath(saved.configPath || 'ax.json');
       setMsg(toast ?? `Remote share settings saved to ${saved.configPath || 'ax.json'}`);
+    }, setErr);
+    setBusy(null);
+    return ok;
+  }
+
+  async function refreshStatusShown() {
+    setErr(null);
+    try {
+      await refreshStatus();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-      throw e;
-    } finally {
-      setBusy(null);
+      setErr(`Could not refresh status: ${errorText(e)}`);
     }
   }
 
@@ -258,7 +270,7 @@ export default function PolicyShareSettingsSection() {
   }
 
   async function saveCurrent() {
-    await persist(config);
+    await persist(configRef.current);
   }
 
   async function runSync() {
@@ -288,8 +300,10 @@ export default function PolicyShareSettingsSection() {
     stopPolling();
     setMsPolling(true);
     const intervalMs = Math.max(5, intervalSec) * 1000;
-    pollRef.current = setInterval(() => {
-      void (async () => {
+    // The next poll starts only after this one settled, so sign-in completes once.
+    pollRef.current = startSerialPoll({
+      intervalMs,
+      tick: async () => {
         try {
           const result = await pollMicrosoftDeviceFlow();
           setStatus((prev) =>
@@ -305,7 +319,7 @@ export default function PolicyShareSettingsSection() {
             setBusy('sync');
             setErr(null);
             try {
-              await saveShareConfig(config);
+              await saveShareConfig(configRef.current);
               const syncStatus = await runShareSync('pull');
               setStatus((prev) =>
                 prev
@@ -324,14 +338,17 @@ export default function PolicyShareSettingsSection() {
             } finally {
               setBusy(null);
             }
+            return true;
           }
+          return false;
         } catch (e) {
           setMsModalErr(e instanceof Error ? e.message : String(e));
           stopPolling();
           setMsPolling(false);
+          return true;
         }
-      })();
-    }, intervalMs);
+      },
+    });
   }
 
   async function startMicrosoftSignIn() {
@@ -433,9 +450,9 @@ export default function PolicyShareSettingsSection() {
               <input
                 className="settings-input settings-input--wide settings-input--mono"
                 value={config.onedrive.shareUrl}
-                disabled={!loaded || !!busy}
+                disabled={shareFieldDisabled({ loaded, busy, kind: 'text' })}
                 onChange={(e) => patch({ onedrive: { ...config.onedrive, shareUrl: e.target.value } })}
-                onBlur={() => void saveCurrent().catch(() => undefined)}
+                onBlur={() => void saveCurrent()}
                 placeholder={DEFAULT_SHARE_CONFIG.onedrive.shareUrl}
               />
             </SettingRow>
@@ -481,9 +498,9 @@ export default function PolicyShareSettingsSection() {
               <input
                 className="settings-input settings-input--wide settings-input--mono"
                 value={config.github.repoUrl}
-                disabled={!loaded || !!busy}
+                disabled={shareFieldDisabled({ loaded, busy, kind: 'text' })}
                 onChange={(e) => patch({ github: { ...config.github, repoUrl: e.target.value } })}
-                onBlur={() => void saveCurrent().catch(() => undefined)}
+                onBlur={() => void saveCurrent()}
                 placeholder="https://github.com/org/repo.git"
               />
             </SettingRow>
@@ -491,18 +508,18 @@ export default function PolicyShareSettingsSection() {
               <input
                 className="settings-input"
                 value={config.github.branch}
-                disabled={!loaded || !!busy}
+                disabled={shareFieldDisabled({ loaded, busy, kind: 'text' })}
                 onChange={(e) => patch({ github: { ...config.github, branch: e.target.value } })}
-                onBlur={() => void saveCurrent().catch(() => undefined)}
+                onBlur={() => void saveCurrent()}
               />
             </SettingRow>
             <SettingRow title="Subpath" description="Folder inside the repo (default .ax).">
               <input
                 className="settings-input settings-input--mono"
                 value={config.github.subpath}
-                disabled={!loaded || !!busy}
+                disabled={shareFieldDisabled({ loaded, busy, kind: 'text' })}
                 onChange={(e) => patch({ github: { ...config.github, subpath: e.target.value } })}
-                onBlur={() => void saveCurrent().catch(() => undefined)}
+                onBlur={() => void saveCurrent()}
               />
             </SettingRow>
 
@@ -527,10 +544,10 @@ export default function PolicyShareSettingsSection() {
                   type="password"
                   className="settings-input settings-input--wide settings-input--mono"
                   value={config.github.token}
-                  disabled={!loaded || !!busy}
+                  disabled={shareFieldDisabled({ loaded, busy, kind: 'text' })}
                   autoComplete="off"
                   onChange={(e) => patch({ github: { ...config.github, token: e.target.value } })}
-                  onBlur={() => void saveCurrent().catch(() => undefined)}
+                  onBlur={() => void saveCurrent()}
                   placeholder={
                     config.github.hasToken
                       ? 'Saved in ~/.ax/auth (type to replace)'
@@ -541,12 +558,12 @@ export default function PolicyShareSettingsSection() {
                   <button
                     type="button"
                     className="btn btn-subtle"
-                    disabled={!loaded || !!busy}
+                    disabled={shareFieldDisabled({ loaded, busy, kind: 'control' })}
                     onClick={() =>
                       void persist(
                         { ...config, github: { ...config.github, token: '', clearToken: true } },
                         'API token removed',
-                      ).catch(() => undefined)
+                      )
                     }
                   >
                     Remove token
@@ -644,7 +661,7 @@ export default function PolicyShareSettingsSection() {
             <button type="button" className="btn primary" disabled={!loaded || !!busy} onClick={() => void runSync()}>
               {busy === 'sync' ? <BusyLabel label="Syncing…" /> : 'Sync now'}
             </button>
-            <button type="button" className="btn btn-subtle" disabled={!loaded || !!busy} onClick={() => void refreshStatus()}>
+            <button type="button" className="btn btn-subtle" disabled={!loaded || !!busy} onClick={() => void refreshStatusShown()}>
               Refresh status
             </button>
           </div>

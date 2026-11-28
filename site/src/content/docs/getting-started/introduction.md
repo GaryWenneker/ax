@@ -10,7 +10,7 @@ Ax is two programs:
 - **`ax`** is headless. It holds the knowledge graph, the memory and the policy engine, and serves them through the CLI and the MCP server. It has no built-in interface.
 - **`ax-admin`** is the visual interface. It is a separate application that connects to an Ax through its [remote MCP](/guides/remote-mcp/) address.
 
-![ax-admin — the Operations page with sync, rebuild index and reload policy](/screenshots/ax-admin-operations.png)
+![ax-admin — sync and rebuild index on a connected environment](/screenshots/ax-admin-operations.png)
 
 The full ax, with its built-in Command Center, is being phased out; see [Headless ax and ax-admin](/guides/phase-out/). The headless build is released for Linux today. On macOS and Windows you install the full ax, whose CLI and MCP server are the same commands. See [Installation](/getting-started/installation/).
 

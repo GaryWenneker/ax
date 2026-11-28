@@ -35,3 +35,30 @@ export function labelAlpha(scale: number, threshold: number): number {
   const start = 1.8 + threshold * 0.4;
   return Math.max(0, Math.min(1, (scale - start) / 0.4));
 }
+
+/** Font size label widths are measured at; other sizes scale from it. */
+const MEASURE_PX = 100;
+const MAX_CACHED_LABELS = 20_000;
+
+/**
+ * Label widths measured once per text and scaled to the requested font size,
+ * so a redraw does not call `measureText` for every label.
+ */
+export class LabelWidths {
+  private readonly measure: (text: string, px: number) => number;
+  private readonly cache = new Map<string, number>();
+
+  constructor(measure: (text: string, px: number) => number) {
+    this.measure = measure;
+  }
+
+  width(text: string, px: number): number {
+    let base = this.cache.get(text);
+    if (base === undefined) {
+      if (this.cache.size >= MAX_CACHED_LABELS) this.cache.clear();
+      base = this.measure(text, MEASURE_PX);
+      this.cache.set(text, base);
+    }
+    return (base * px) / MEASURE_PX;
+  }
+}

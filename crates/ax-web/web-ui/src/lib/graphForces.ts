@@ -28,3 +28,14 @@ export function forceParams(s: GraphSettings): ForceParams {
     linkDistance: s.linkDistance,
   };
 }
+
+/** Changes exactly when a setting that moves nodes changes (forces and the collision radius). */
+export function simulationKey(s: GraphSettings): string {
+  const f = forceParams(s);
+  return [f.charge, f.center, f.linkStrength, f.linkDistance, s.nodeSize].join('|');
+}
+
+/** Changes exactly when a setting that decides which nodes are shown changes. */
+export function filterKey(s: GraphSettings): string {
+  return JSON.stringify([s.search, s.attachments, s.existingOnly, s.orphans]);
+}

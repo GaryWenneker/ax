@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { clickableRowProps } from '../lib/clickableRow';
 
 import { useLive, useNewKeys } from '../lib/useLive';
 import {
@@ -376,7 +377,7 @@ export default function PricesPage() {
                                   .filter(Boolean)
                                   .join(' ') || undefined
                               }
-                              onClick={() => setSelected(m.model_id)}
+                              {...clickableRowProps(() => setSelected(m.model_id), { selected: selected === m.model_id })}
                               style={{ cursor: 'pointer' }}
                             >
                               <td>{m.display_name || m.model_id}</td>

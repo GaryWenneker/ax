@@ -129,7 +129,12 @@ async fn set_rule_enabled(
         return err(StatusCode::FORBIDDEN, "AX_WEB_READONLY=1");
     }
     let ws = hub.read().await;
-    match ws.policy.store.set_rule_enabled(&id, payload.enabled).await {
+    match ws
+        .policy
+        .store
+        .set_enabled(Some(ax_policy::PolicyItemKind::Rule), &id, payload.enabled)
+        .await
+    {
         Ok(true) => (
             StatusCode::OK,
             Json(serde_json::json!({ "ok": true, "id": id, "enabled": payload.enabled })),
@@ -152,7 +157,11 @@ async fn set_skill_enabled(
     match ws
         .policy
         .store
-        .set_skill_enabled(&name, payload.enabled)
+        .set_enabled(
+            Some(ax_policy::PolicyItemKind::Skill),
+            &name,
+            payload.enabled,
+        )
         .await
     {
         Ok(true) => (
@@ -188,7 +197,12 @@ async fn set_rule_storage(
     match ws
         .policy
         .store
-        .set_rule_storage(&id, target, payload.keep_file)
+        .try_set_item_storage(
+            Some(ax_policy::PolicyItemKind::Rule),
+            &id,
+            target,
+            payload.keep_file,
+        )
         .await
     {
         Ok(Some(v)) => (StatusCode::OK, Json(v)).into_response(),
@@ -212,7 +226,12 @@ async fn set_skill_storage(
     match ws
         .policy
         .store
-        .set_skill_storage(&name, target, payload.keep_file)
+        .try_set_item_storage(
+            Some(ax_policy::PolicyItemKind::Skill),
+            &name,
+            target,
+            payload.keep_file,
+        )
         .await
     {
         Ok(Some(v)) => (StatusCode::OK, Json(v)).into_response(),
@@ -295,9 +314,13 @@ async fn review_list(State(hub): State<WebHub>) -> impl IntoResponse {
     }
 }
 
-async fn review_show(State(hub): State<WebHub>, Path(id): Path<String>) -> impl IntoResponse {
+async fn review_show(
+    State(hub): State<WebHub>,
+    Path(id): Path<String>,
+    Query(query): Query<ReviewQuery>,
+) -> impl IntoResponse {
     let ws = hub.read().await;
-    match ax_policy::pending_diff(ws.policy.store.project_root(), &id) {
+    match ax_policy::pending_diff(&ws.policy.store, &id, query.kind.as_deref()).await {
         Ok(diff) => (StatusCode::OK, Json(diff)).into_response(),
         Err(e) => err(StatusCode::NOT_FOUND, &e.to_string()),
     }
@@ -1504,7 +1527,7 @@ async fn capture_prompt(
             Ok(rules) => rules.into_iter().map(|r| r.id).collect::<Vec<_>>(),
             Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
         };
-        proposal = finalize_proposal(proposal, &existing);
+        proposal = finalize_proposal(proposal, &existing, &ws.project_root);
 
         capture_propose_response(proposal)
     }

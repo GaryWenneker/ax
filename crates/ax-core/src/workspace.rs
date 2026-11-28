@@ -79,8 +79,14 @@ pub fn write_workspace_config(root: &Path, config: &WorkspaceConfig) -> Result<(
     let path = root.join(CONFIG_FILENAME);
     let mut root_val = if path.is_file() {
         let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        serde_json::from_str::<serde_json::Value>(&content)
-            .unwrap_or_else(|_| serde_json::json!({}))
+        // Never replace a file the user can still fix: the other settings in it
+        // would be lost.
+        serde_json::from_str::<serde_json::Value>(&content).map_err(|e| {
+            format!(
+                "{} is not valid JSON ({e}); fix it before adding workspace members",
+                path.display()
+            )
+        })?
     } else {
         serde_json::json!({})
     };
@@ -92,7 +98,7 @@ pub fn write_workspace_config(root: &Path, config: &WorkspaceConfig) -> Result<(
         serde_json::to_value(&config.members).map_err(|e| e.to_string())?,
     );
     let pretty = serde_json::to_string_pretty(&root_val).map_err(|e| e.to_string())?;
-    std::fs::write(&path, pretty + "\n").map_err(|e| e.to_string())?;
+    ax_utils::atomic_write(&path, (pretty + "\n").as_bytes()).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -213,6 +219,43 @@ pub fn find_workspace_root(start: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn write_refuses_to_replace_an_unparseable_ax_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = "{\n  \"extensions\": [\".rs\"],\n}\n";
+        std::fs::write(dir.path().join("ax.json"), original).unwrap();
+        let cfg = WorkspaceConfig {
+            members: vec![WorkspaceMember {
+                path: "a".into(),
+                name: None,
+            }],
+        };
+        let err = write_workspace_config(dir.path(), &cfg).unwrap_err();
+        assert!(err.contains("not valid JSON"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("ax.json")).unwrap(),
+            original
+        );
+    }
+
+    #[test]
+    fn write_keeps_other_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("ax.json"), r#"{"exclude":["x"]}"#).unwrap();
+        let cfg = WorkspaceConfig {
+            members: vec![WorkspaceMember {
+                path: "a".into(),
+                name: None,
+            }],
+        };
+        write_workspace_config(dir.path(), &cfg).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.path().join("ax.json")).unwrap())
+                .unwrap();
+        assert_eq!(v["exclude"][0], "x");
+        assert_eq!(v["members"][0]["path"], "a");
+    }
 
     #[test]
     fn write_and_load_roundtrip() {

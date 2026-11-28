@@ -70,12 +70,28 @@ function findContainingParent(node: NodeRow, candidates: NodeRow[]): NodeRow | n
   for (const candidate of candidates) {
     if (!strictlyContains(candidate, node)) continue;
     const s = span(candidate);
-    if (s < bestSpan) {
+    // On a tie (a module that spans the whole file) the deeper kind is the closer parent.
+    if (s < bestSpan || (s === bestSpan && best && kindRank(candidate.kind) > kindRank(best.kind))) {
       bestSpan = s;
       best = candidate;
     }
   }
   return best;
+}
+
+const IDENT_CHAR = /[A-Za-z0-9_$]/;
+
+/** True when `name` appears in `hay` as a whole identifier, not inside a longer one. */
+function containsIdentifier(hay: string, name: string): boolean {
+  let from = 0;
+  for (;;) {
+    const at = hay.indexOf(name, from);
+    if (at < 0) return false;
+    const before = at > 0 ? hay[at - 1] : '';
+    const after = hay[at + name.length] ?? '';
+    if (!IDENT_CHAR.test(before) && !IDENT_CHAR.test(after)) return true;
+    from = at + 1;
+  }
 }
 
 function findRelatedType(fn: NodeRow, types: NodeRow[]): NodeRow | null {
@@ -84,7 +100,7 @@ function findRelatedType(fn: NodeRow, types: NodeRow[]): NodeRow | null {
   let bestLen = 0;
   for (const t of types) {
     if (t.name.length < 3) continue;
-    if (hay.includes(t.name) && t.name.length > bestLen) {
+    if (t.name.length > bestLen && containsIdentifier(hay, t.name)) {
       best = t;
       bestLen = t.name.length;
     }

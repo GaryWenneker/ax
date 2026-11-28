@@ -5,7 +5,7 @@ Optional Language Server enrichment for unresolved references.
 ## Commands
 
 ```bash
-ax lsp status              # which servers are runnable (PATH, rustup which, node_modules/.bin)
+ax lsp status              # which servers are runnable (rustup which, PATH; node_modules/.bin only with AX_LSP_PROJECT_BINS=1)
 ax lsp enrich              # resolve up to 200 unresolved refs
 ax lsp enrich --limit 50 --json
 ```

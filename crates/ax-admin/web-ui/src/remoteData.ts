@@ -8,10 +8,25 @@ export interface Tool {
   inputSchema: unknown;
   /** False when the server marks the tool as changing data. */
   readOnly: boolean;
+  /** True when the server asks for the `ax:admin` scope to call the tool. */
+  admin: boolean;
 }
+
+/** The scope a remote Ax asks for on a tool that needs an admin grant. */
+export const ADMIN_SCOPE = 'ax:admin';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Whether a tool's security schemes (top level or `_meta`) ask for the admin scope. */
+function asksForAdmin(entry: Record<string, unknown>): boolean {
+  const meta = isRecord(entry._meta) ? entry._meta : {};
+  return [entry.securitySchemes, meta.securitySchemes].some(
+    (schemes) =>
+      Array.isArray(schemes) &&
+      schemes.some((scheme) => isRecord(scheme) && Array.isArray(scheme.scopes) && scheme.scopes.includes(ADMIN_SCOPE)),
+  );
 }
 
 export function toolsFrom(value: unknown): Tool[] {
@@ -27,6 +42,7 @@ export function toolsFrom(value: unknown): Tool[] {
       description: typeof entry.description === 'string' ? entry.description : '',
       inputSchema: entry.inputSchema,
       readOnly: annotations.readOnlyHint !== false,
+      admin: asksForAdmin(entry),
     });
   }
   return tools;

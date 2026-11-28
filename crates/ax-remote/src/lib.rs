@@ -11,8 +11,8 @@ pub use config::{AzureDevOpsSection, GithubSection, RemoteConfig};
 pub use provider::{DraftPrRequest, PrProvider, PrRef, ReviewComment};
 pub use seed::{seed_ship_config, ShipSeedResult};
 pub use ship_config::{
-    load_ship_config, save_ship_config, QualityGateSection, ShipConfig, ShipSection,
-    TestRunnerSection,
+    load_ship_config, save_ship_config, try_load_ship_config, QualityGateSection, ShipConfig,
+    ShipSection, TestRunnerSection,
 };
 
 use std::path::Path;

@@ -1,4 +1,4 @@
-//! Recursive policy discovery for database migration — rules and skills across the repo.
+//! Policy discovery for database migration — rules and skills in the project's policy folders.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -78,57 +78,77 @@ pub struct MigrateApplyResult {
     pub files_removed: u32,
 }
 
-/// Recursively scan the project for policy rules (`.mdc`) and skills (`SKILL.md`).
+/// Scan the project's policy folders for rules (`.mdc`) and skills (`SKILL.md`).
+///
+/// Only files inside a policy folder count: the agents folder
+/// (`policy.agentsDir`, `.agents` by default), the legacy `.ax/policy`, and
+/// the IDE folders `.cursor/rules`, `.cursor/skills` and `.claude/skills` (at
+/// any depth, for monorepo members). Templates, fixtures and docs elsewhere
+/// are ignored. Pending, inactive and private policy is reported as skipped
+/// and never imported. When two files share an id, the one from the
+/// higher-precedence folder wins (agents folder, then `.ax/policy`, then the
+/// IDE folders), and ties go to the first path in sorted order.
 pub fn scan_policy_candidates(project_root: &Path) -> MigratePlan {
-    let mut candidates = Vec::new();
+    let agents = crate::config::agents_dir_name(project_root);
+    let mut found: Vec<(u8, MigrateCandidate)> = Vec::new();
     let mut skipped = Vec::new();
-    let mut seen_keys: HashSet<String> = HashSet::new();
 
-    for entry in walkdir::WalkDir::new(project_root)
+    let mut walk = walkdir::WalkDir::new(project_root)
         .follow_links(false)
-        .into_iter()
-        .filter_entry(|e| !should_skip_entry(e.path(), project_root))
-    {
+        .sort_by_file_name()
+        .into_iter();
+    while let Some(entry) = walk.next() {
         let entry = match entry {
             Ok(e) => e,
             Err(_) => continue,
         };
-        if !entry.file_type().is_file() {
-            continue;
-        }
-
         let path = entry.path();
         let rel = match path.strip_prefix(project_root) {
             Ok(r) => r.to_string_lossy().replace('\\', "/"),
             Err(_) => continue,
         };
 
+        if entry.file_type().is_dir() {
+            if let Some(reason) = excluded_policy_dir(&rel) {
+                skipped.push(MigrateSkipped {
+                    source_path: rel,
+                    reason: reason.into(),
+                });
+                walk.skip_current_dir();
+            } else if should_skip_dir(path, &rel) {
+                walk.skip_current_dir();
+            }
+            continue;
+        }
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
         let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
         if file_name == "SKILL.md" {
+            let Some(rank) = skill_folder_rank(&rel, &agents) else {
+                continue;
+            };
             match try_parse_skill(path, &rel) {
                 Ok(Some(doc)) => {
                     let key = format!("skill:{}", doc.frontmatter.name);
-                    if !seen_keys.insert(key.clone()) {
-                        skipped.push(MigrateSkipped {
-                            source_path: rel,
-                            reason: format!("duplicate skill name `{}`", doc.frontmatter.name),
-                        });
-                        continue;
-                    }
-                    let source = classify_source(&rel);
+                    let source = classify_source(&rel, &agents);
                     let preview = serialize_skill(&doc.frontmatter, &doc.body);
                     let questions = migrate_skill_questions(&doc, &source);
-                    candidates.push(MigrateCandidate {
-                        kind: "skill".into(),
-                        source,
-                        source_path: rel,
-                        key,
-                        preview,
-                        questions,
-                        rule: None,
-                        skill: Some(doc),
-                    });
+                    found.push((
+                        rank,
+                        MigrateCandidate {
+                            kind: "skill".into(),
+                            source,
+                            source_path: rel,
+                            key,
+                            preview,
+                            questions,
+                            rule: None,
+                            skill: Some(doc),
+                        },
+                    ));
                 }
                 Ok(None) => {}
                 Err(reason) => skipped.push(MigrateSkipped {
@@ -142,6 +162,9 @@ pub fn scan_policy_candidates(project_root: &Path) -> MigratePlan {
         if path.extension().and_then(|e| e.to_str()) != Some("mdc") {
             continue;
         }
+        let Some(rank) = rule_folder_rank(&rel, &agents) else {
+            continue;
+        };
 
         if is_bootstrap_rule(&rel, file_name) {
             skipped.push(MigrateSkipped {
@@ -154,32 +177,47 @@ pub fn scan_policy_candidates(project_root: &Path) -> MigratePlan {
         match try_parse_rule(path, &rel) {
             Ok(Some(doc)) => {
                 let key = format!("rule:{}", doc.frontmatter.id);
-                if !seen_keys.insert(key.clone()) {
-                    skipped.push(MigrateSkipped {
-                        source_path: rel,
-                        reason: format!("duplicate rule id `{}`", doc.frontmatter.id),
-                    });
-                    continue;
-                }
-                let source = classify_source(&rel);
+                let source = classify_source(&rel, &agents);
                 let preview = serialize_rule(&doc.frontmatter, &doc.body);
                 let questions = migrate_rule_questions(&doc, &source);
-                candidates.push(MigrateCandidate {
-                    kind: "rule".into(),
-                    source,
-                    source_path: rel,
-                    key,
-                    preview,
-                    questions,
-                    rule: Some(doc),
-                    skill: None,
-                });
+                found.push((
+                    rank,
+                    MigrateCandidate {
+                        kind: "rule".into(),
+                        source,
+                        source_path: rel,
+                        key,
+                        preview,
+                        questions,
+                        rule: Some(doc),
+                        skill: None,
+                    },
+                ));
             }
             Ok(None) => {}
             Err(reason) => skipped.push(MigrateSkipped {
                 source_path: rel,
                 reason,
             }),
+        }
+    }
+
+    found.sort_by(|a, b| (a.0, &a.1.source_path).cmp(&(b.0, &b.1.source_path)));
+    let mut seen_keys: HashSet<String> = HashSet::new();
+    let mut candidates = Vec::new();
+    for (_, candidate) in found {
+        if seen_keys.insert(candidate.key.clone()) {
+            candidates.push(candidate);
+        } else {
+            let (what, name) = candidate
+                .key
+                .split_once(':')
+                .map(|(k, n)| (if k == "rule" { "rule id" } else { "skill name" }, n))
+                .unwrap_or(("key", candidate.key.as_str()));
+            skipped.push(MigrateSkipped {
+                reason: format!("duplicate {what} `{name}`"),
+                source_path: candidate.source_path,
+            });
         }
     }
 
@@ -273,7 +311,7 @@ pub fn remove_ax_policy_file_sources(project_root: &Path, candidates: &[MigrateC
 }
 
 pub fn migrate_interview_instruction() -> String {
-    "For each candidate in order: ask every question in questions[]. Then run `ax policy storage database --yes` to import all with parsed defaults and delete `.agents/` / `.ax/policy/` files. Use `--keep-files` to leave markdown on disk. `.cursor/` bootstrap files are never deleted.".into()
+    "For each candidate in order: ask every question in questions[]. Then run `ax policy storage database --yes` to import all with parsed defaults and delete the agents folder (`policy.agentsDir`, `.agents` by default) and `.ax/policy/` files. Use `--keep-files` to leave markdown on disk. `.cursor/` bootstrap files are never deleted.".into()
 }
 
 pub fn migrate_rule_questions(doc: &PolicyRuleDoc, source: &str) -> Vec<CaptureInterviewQuestion> {
@@ -436,40 +474,72 @@ pub fn migrate_skill_questions(
     ]
 }
 
-fn should_skip_entry(path: &Path, project_root: &Path) -> bool {
-    if !path.is_dir() {
-        return false;
+/// Policy folders the migration must not import: unreviewed, disabled and
+/// private items keep their own state on disk.
+fn excluded_policy_dir(rel: &str) -> Option<&'static str> {
+    match rel {
+        ".ax/policy/pending" => Some("pending review — approve it before migrating"),
+        ".ax/policy-inactive" => Some("disabled policy — not imported"),
+        ".ax/policy-private" => Some("private policy — stays on disk"),
+        _ => None,
     }
-    let rel = path
-        .strip_prefix(project_root)
-        .map(|p| p.to_string_lossy().replace('\\', "/"))
-        .unwrap_or_default();
+}
 
+fn should_skip_dir(path: &Path, rel: &str) -> bool {
     if rel.is_empty() {
         return false;
     }
-
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if SKIP_DIR_NAMES.contains(&name) {
         return true;
     }
-
-    if name == ".ax" {
-        return false;
-    }
-
-    if rel.starts_with(".ax/") && !rel.starts_with(".ax/policy") {
-        return true;
-    }
-
-    false
+    rel.starts_with(".ax/") && rel != ".ax/policy" && !rel.starts_with(".ax/policy/")
 }
 
-fn classify_source(rel_path: &str) -> String {
+/// True when `rel` lies under `folder` at the root or under a nested
+/// `/<folder>` (a monorepo member's IDE folder).
+fn under_folder(rel: &str, folder: &str, nested: bool) -> Option<bool> {
+    if rel.starts_with(folder) {
+        Some(false)
+    } else if nested && rel.contains(&format!("/{folder}")) {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+/// Precedence of the folder holding a rule file (lower wins), or `None` when
+/// the file is not in a policy folder.
+fn rule_folder_rank(rel: &str, agents: &str) -> Option<u8> {
+    if rel.starts_with(&format!("{agents}/rules/")) {
+        return Some(0);
+    }
+    if rel.starts_with(".ax/policy/rules/") {
+        return Some(1);
+    }
+    under_folder(rel, ".cursor/rules/", true).map(|nested| if nested { 4 } else { 2 })
+}
+
+/// Precedence of the folder holding a `SKILL.md` (lower wins), or `None` when
+/// the file is not in a policy folder.
+fn skill_folder_rank(rel: &str, agents: &str) -> Option<u8> {
+    if rel.starts_with(&format!("{agents}/skills/")) {
+        return Some(0);
+    }
+    if rel.starts_with(".ax/policy/skills/") {
+        return Some(1);
+    }
+    if let Some(nested) = under_folder(rel, ".cursor/skills/", true) {
+        return Some(if nested { 4 } else { 2 });
+    }
+    under_folder(rel, ".claude/skills/", true).map(|nested| if nested { 5 } else { 3 })
+}
+
+fn classify_source(rel_path: &str, agents: &str) -> String {
     if rel_path.starts_with(".ax/policy/rules/")
         || rel_path.starts_with(".ax/policy/skills/")
-        || rel_path.starts_with(".agents/rules/")
-        || rel_path.starts_with(".agents/skills/")
+        || rel_path.starts_with(&format!("{agents}/rules/"))
+        || rel_path.starts_with(&format!("{agents}/skills/"))
     {
         "ax-policy".into()
     } else if rel_path.starts_with(".cursor/rules/") {
@@ -607,6 +677,84 @@ triggers: [test]
         let c = plan.candidates.first().unwrap();
         assert!(c.questions.iter().any(|q| q.field == "storage"));
         assert!(c.questions.iter().any(|q| q.field == "import"));
+    }
+
+    #[test]
+    fn scan_leaves_pending_private_and_inactive_files_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        write_rule(dir.path(), ".agents/rules/live.mdc", "live");
+        write_rule(dir.path(), ".ax/policy/pending/rules/new.mdc", "new");
+        write_rule(dir.path(), ".ax/policy-inactive/rules/off.mdc", "off");
+        write_rule(dir.path(), ".ax/policy-private/rules/mine.mdc", "mine");
+        write_skill(dir.path(), ".ax/policy/pending/skills/wip/SKILL.md", "wip");
+
+        let plan = scan_policy_candidates(dir.path());
+        let keys: Vec<&str> = plan.candidates.iter().map(|c| c.key.as_str()).collect();
+        assert_eq!(keys, vec!["rule:live"]);
+        for skipped in [
+            ".ax/policy/pending",
+            ".ax/policy-inactive",
+            ".ax/policy-private",
+        ] {
+            assert!(
+                plan.skipped.iter().any(|s| s.source_path == skipped),
+                "{skipped} should be reported as skipped: {:?}",
+                plan.skipped
+            );
+        }
+    }
+
+    #[test]
+    fn scan_ignores_rule_and_skill_files_outside_policy_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        write_rule(dir.path(), "crates/x/templates/rules/tmpl.mdc", "tmpl");
+        write_skill(
+            dir.path(),
+            "crates/x/templates/skills/tmpl/SKILL.md",
+            "tmpl",
+        );
+        write_rule(dir.path(), "docs/example.mdc", "example");
+        write_skill(dir.path(), "fixtures/SKILL.md", "fixture");
+        let plan = scan_policy_candidates(dir.path());
+        assert!(plan.candidates.is_empty(), "{:?}", plan.candidates);
+    }
+
+    #[test]
+    fn duplicate_ids_resolve_by_layer_precedence_not_walk_order() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("ax.json"),
+            serde_json::json!({"policy": {"agentsDir": "zz-agents"}}).to_string(),
+        )
+        .unwrap();
+        write_rule(dir.path(), ".ax/policy/rules/foo.mdc", "foo");
+        write_rule(dir.path(), ".cursor/rules/foo.mdc", "foo");
+        write_rule(dir.path(), "zz-agents/rules/foo.mdc", "foo");
+        write_skill(dir.path(), ".claude/skills/deploy/SKILL.md", "deploy");
+        write_skill(dir.path(), "zz-agents/skills/deploy/SKILL.md", "deploy");
+
+        let plan = scan_policy_candidates(dir.path());
+        let rule = plan
+            .candidates
+            .iter()
+            .find(|c| c.key == "rule:foo")
+            .unwrap();
+        assert_eq!(rule.source_path, "zz-agents/rules/foo.mdc");
+        assert_eq!(rule.source, "ax-policy");
+        let skill = plan
+            .candidates
+            .iter()
+            .find(|c| c.key == "skill:deploy")
+            .unwrap();
+        assert_eq!(skill.source_path, "zz-agents/skills/deploy/SKILL.md");
+        assert_eq!(skill.source, "ax-policy");
+        assert_eq!(
+            plan.skipped
+                .iter()
+                .filter(|s| s.reason.starts_with("duplicate"))
+                .count(),
+            3
+        );
     }
 
     #[test]

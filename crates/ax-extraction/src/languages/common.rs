@@ -49,6 +49,23 @@ pub fn extract_symbols(
     language: Language,
     kinds: &[(NodeKind, &str)],
 ) -> ExtractionResult {
+    extract_symbols_with(tree, source, file_path, language, kinds, |_, kind| kind)
+}
+
+/// Like [`extract_symbols`], with `classify` choosing the final kind of each
+/// match from its syntax node (a function inside an `impl` is a method).
+///
+/// A syntax node yields at most one symbol: when two entries in `kinds` name
+/// the same node type, the first one wins.
+pub fn extract_symbols_with(
+    tree: &Tree,
+    source: &[u8],
+    file_path: &str,
+    language: Language,
+    kinds: &[(NodeKind, &str)],
+    classify: impl Fn(TsNode, NodeKind) -> NodeKind,
+) -> ExtractionResult {
+    let mut seen_nodes: std::collections::HashSet<usize> = std::collections::HashSet::new();
     let mut result = ExtractionResult::default();
     let root = tree.root_node();
     let file_id = file_node_id(file_path);
@@ -83,11 +100,25 @@ pub fn extract_symbols(
     };
     result.nodes.push(file_node);
 
-    for (kind, node_type) in kinds {
-        walk_nodes(root, node_type, &mut |n| {
+    // One iterative pass collects the matches of every kind; they are then
+    // emitted kind by kind, in tree order within each kind.
+    let mut matches: Vec<Vec<TsNode>> = vec![Vec::new(); kinds.len()];
+    for_each_node(root, |n| {
+        for (i, (_, node_type)) in kinds.iter().enumerate() {
+            if n.kind() == *node_type {
+                matches[i].push(n);
+            }
+        }
+    });
+    for ((kind, node_type), found) in kinds.iter().zip(matches) {
+        for n in found {
+            if !seen_nodes.insert(n.id()) {
+                continue;
+            }
+            let kind = &classify(n, *kind);
             let name = declaration_name(n, source, node_type);
             if name.is_empty() {
-                return;
+                continue;
             }
             let qualified = format!("{}::{}", file_path, name);
             let id = make_node_id(file_path, &qualified);
@@ -125,17 +156,20 @@ pub fn extract_symbols(
                 provenance: Some(Provenance::TreeSitter),
                 confidence: Some(ax_types::EdgeConfidence::Extracted),
             });
-        });
+        }
     }
 
     result
 }
 
+/// Longest symbol name kept from source text; longer text is not a name.
+pub(crate) const MAX_NAME_CHARS: usize = 200;
+
 fn declaration_name(node: TsNode, source: &[u8], node_type: &str) -> String {
     if let Some(name_node) = node.child_by_field_name("name") {
         let t = name_node.utf8_text(source).unwrap_or("").trim();
         if !t.is_empty() {
-            return t.to_string();
+            return ax_utils::truncate_chars(t, MAX_NAME_CHARS, "");
         }
     }
     // method_definition: name field on child identifier
@@ -150,18 +184,68 @@ fn declaration_name(node: TsNode, source: &[u8], node_type: &str) -> String {
             }
         }
     }
-    node.utf8_text(source).unwrap_or("").trim().to_string()
-}
-fn walk_nodes<F>(node: TsNode, node_type: &str, f: &mut F)
-where
-    F: FnMut(TsNode),
-{
-    if node.kind() == node_type {
-        f(node);
+    // Mapping pairs (YAML block_mapping_pair): the key names the pair.
+    if let Some(key) = node.child_by_field_name("key") {
+        if let Some(t) = short_text(key, source) {
+            return t.trim_matches(|c| c == '"' || c == '\'').to_string();
+        }
     }
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            walk_nodes(child, node_type, f);
+    // C/C++ definitions: the innermost declarator is the identifier.
+    if let Some(mut declarator) = node.child_by_field_name("declarator") {
+        while let Some(inner) = declarator.child_by_field_name("declarator") {
+            declarator = inner;
+        }
+        if let Some(t) = short_text(declarator, source) {
+            return t;
+        }
+    }
+    // XML element: the Name inside its start tag or empty-element tag.
+    if node_type == "element" {
+        for i in 0..node.named_child_count() {
+            let Some(tag) = node.named_child(i) else {
+                continue;
+            };
+            if !matches!(tag.kind(), "STag" | "EmptyElemTag") {
+                continue;
+            }
+            for j in 0..tag.named_child_count() {
+                if let Some(name) = tag.named_child(j).filter(|c| c.kind() == "Name") {
+                    if let Some(t) = short_text(name, source) {
+                        return t;
+                    }
+                }
+            }
+        }
+    }
+    // Last resort for small leaf-like nodes (a properties key, a template tag).
+    // A node whose text spans lines or is long has no usable name and is skipped.
+    short_text(node, source).unwrap_or_default()
+}
+
+/// The trimmed text of `node` when it is one line of at most [`MAX_NAME_CHARS`].
+fn short_text(node: TsNode, source: &[u8]) -> Option<String> {
+    let t = node.utf8_text(source).ok()?.trim();
+    (!t.is_empty() && !t.contains('\n') && t.chars().count() <= MAX_NAME_CHARS)
+        .then(|| t.to_string())
+}
+/// Calls `f` on `root` and every node below it, in tree (pre-)order.
+///
+/// Iterative, so a deeply nested file cannot overflow the parse worker's
+/// stack — an overflow aborts the whole process rather than panicking.
+pub(crate) fn for_each_node<'t>(root: TsNode<'t>, mut f: impl FnMut(TsNode<'t>)) {
+    let mut cursor = root.walk();
+    loop {
+        f(cursor.node());
+        if cursor.goto_first_child() {
+            continue;
+        }
+        loop {
+            if cursor.goto_next_sibling() {
+                break;
+            }
+            if !cursor.goto_parent() {
+                return;
+            }
         }
     }
 }
@@ -269,6 +353,87 @@ mod tests {
     fn comment_separated_by_blank_line_is_not_a_docstring() {
         let docs = rust_docs("// header note\n\nfn lonely() {}\n");
         assert_eq!(docs[0].1, None);
+    }
+
+    fn names(
+        lang: tree_sitter::Language,
+        language: Language,
+        src: &str,
+        kind: (NodeKind, &str),
+    ) -> Vec<String> {
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&lang).unwrap();
+        let tree = parser.parse(src, None).unwrap();
+        extract_symbols(&tree, src.as_bytes(), "f", language, &[kind])
+            .nodes
+            .into_iter()
+            .filter(|n| n.kind == kind.0)
+            .map(|n| n.name)
+            .collect()
+    }
+
+    #[test]
+    fn yaml_pairs_are_named_by_their_key() {
+        let src = "services:\n  web:\n    image: nginx\n    ports:\n      - 80\n";
+        let got = names(
+            tree_sitter_yaml::LANGUAGE.into(),
+            Language::Yaml,
+            src,
+            (NodeKind::Variable, "block_mapping_pair"),
+        );
+        assert_eq!(got, vec!["services", "web", "image", "ports"]);
+    }
+
+    #[test]
+    fn xml_elements_are_named_by_their_tag() {
+        let src = "<project>\n  <dependencies>\n    <dependency><artifactId>x</artifactId></dependency>\n  </dependencies>\n  <br/>\n</project>\n";
+        let got = names(
+            tree_sitter_xml::LANGUAGE_XML.into(),
+            Language::Xml,
+            src,
+            (NodeKind::Component, "element"),
+        );
+        assert_eq!(
+            got,
+            vec!["project", "dependencies", "dependency", "artifactId", "br"]
+        );
+    }
+
+    #[test]
+    fn c_functions_are_named_by_their_declarator() {
+        let src = "typedef int Count;\nstatic int *make(void) {\n  return 0;\n}\nint main(int argc) {\n  return 0;\n}\n";
+        let lang: tree_sitter::Language = tree_sitter_c::LANGUAGE.into();
+        let got = names(
+            lang.clone(),
+            Language::C,
+            src,
+            (NodeKind::Function, "function_definition"),
+        );
+        assert_eq!(got, vec!["make", "main"]);
+        let got = names(
+            lang,
+            Language::C,
+            src,
+            (NodeKind::TypeAlias, "type_definition"),
+        );
+        assert_eq!(got, vec!["Count"]);
+    }
+
+    #[test]
+    fn a_node_without_a_name_never_takes_its_whole_source_as_name() {
+        // A multi-line flow mapping key has no short name; it is skipped.
+        let src = "? |\n  long\n  key\n: value\n";
+        let got = names(
+            tree_sitter_yaml::LANGUAGE.into(),
+            Language::Yaml,
+            src,
+            (NodeKind::Variable, "block_mapping_pair"),
+        );
+        assert!(
+            got.iter()
+                .all(|n| !n.contains('\n') && n.chars().count() <= MAX_NAME_CHARS),
+            "{got:?}"
+        );
     }
 
     #[test]

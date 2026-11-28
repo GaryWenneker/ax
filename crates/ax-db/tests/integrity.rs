@@ -1220,3 +1220,69 @@ async fn a_dangling_edge_names_its_file_for_reindex() {
     assert_eq!(dangling, 1);
     cleanup(&root);
 }
+
+/// Damages one b-tree page in the middle of the file, leaving the header and
+/// the schema page intact, so `PRAGMA quick_check` reports damage.
+async fn damaged(path: &Path) -> Vec<u8> {
+    let db = seeded(path).await;
+    for i in 0..400 {
+        sqlx::query(
+            "INSERT INTO memories (id, title, body, created_at, updated_at) VALUES (?, ?, ?, 1, 1)",
+        )
+        .bind(format!("m-{i}"))
+        .bind(format!("title {i}"))
+        .bind("x".repeat(300))
+        .execute(db.pool())
+        .await
+        .expect("insert");
+    }
+    settle(&db).await;
+    let mut bytes = std::fs::read(path).unwrap();
+    let page = u16::from_be_bytes([bytes[16], bytes[17]]) as usize;
+    let page = if page == 1 { 65_536 } else { page };
+    let pages = bytes.len() / page;
+    let target = pages / 2;
+    for b in &mut bytes[target * page..target * page + 64] {
+        *b = 0xA5;
+    }
+    std::fs::write(path, &bytes).unwrap();
+    bytes
+}
+
+#[tokio::test]
+async fn the_unattended_quick_check_leaves_a_damaged_database_alone() {
+    let root = temp_root("damaged-quick");
+    let path = db_path(&root);
+    let before = damaged(&path).await;
+    let report = check_database(
+        &path,
+        &CheckOptions {
+            quick: true,
+            embedding_model: None,
+        },
+    )
+    .await;
+    assert!(
+        codes(&report.findings).contains(&"integrity"),
+        "the damage must be found: {:?}",
+        report.findings
+    );
+    run_quick_check(&path, true).await.unwrap();
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        before,
+        "the unattended check must not rewrite a damaged database"
+    );
+    for side in ["-wal", "-journal"] {
+        let p = PathBuf::from(format!("{}{side}", path.display()));
+        assert!(
+            std::fs::metadata(&p).map(|m| m.len() == 0).unwrap_or(true),
+            "{side} holds writes"
+        );
+    }
+    assert!(writers_blocked(&path), "an incident names ax db repair");
+    let repaired = repair_rebuildable_indexes(&path).await.unwrap();
+    assert!(repaired.is_empty(), "no unattended rewrite: {repaired:?}");
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    cleanup(&root);
+}

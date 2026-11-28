@@ -3,17 +3,9 @@ import { createPortal } from 'react-dom';
 
 import Codicon from './Codicon';
 import { displayPath, pathBreadcrumbs } from '../pathDisplay';
-import {
-  browseWorkspace,
-  fetchWorkspaceCurrent,
-  mkdirWorkspace,
-  streamWorkspaceInit,
-  switchWorkspace,
-  type BrowseEntry,
-  type RecentProject,
-} from '../workspaceApi';
-import { notifyWorkspaceSwitched } from '../workspaceEvents';
+import { fetchWorkspaceCurrent, type RecentProject } from '../workspaceApi';
 import {containOverlayFocus} from '../lib/overlayFocus';
+import { useWorkspaceBrowser } from './useWorkspaceBrowser';
 
 interface Props {
   onClose: () => void;
@@ -29,58 +21,49 @@ function AxProjectBadge({ compact }: { compact?: boolean }) {
   );
 }
 
-export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
+export default function ProjectBrowserModal(props: Props) {
+  const { onClose } = props;
   const modal = useRef<HTMLDivElement>(null);
   const close = useRef(onClose);
   useEffect(() => {close.current = onClose;}, [onClose]);
   const [currentPath, setCurrentPath] = useState('');
   const [recent, setRecent] = useState<RecentProject[]>([]);
-  const [browsePath, setBrowsePath] = useState('');
-  const [browseInitialized, setBrowseInitialized] = useState(false);
-  const [entries, setEntries] = useState<BrowseEntry[]>([]);
-  const [parent, setParent] = useState<string | undefined>();
   const [filter, setFilter] = useState('');
   const [axOnly, setAxOnly] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [busy, setBusy] = useState<string | null>(null);
-  const [log, setLog] = useState<string[]>([]);
-  const [err, setErr] = useState<string | null>(null);
   const [pathDraft, setPathDraft] = useState('');
   const [editingPath, setEditingPath] = useState(false);
-  const loadBrowse = useCallback(async (path: string) => {
-    setErr(null);
-    const data = await browseWorkspace(path);
-    if (data.ok && data.path) {
-      const shown = displayPath(data.path);
-      setBrowsePath(shown);
-      setPathDraft(shown);
-      setParent(data.parent ? displayPath(data.parent) : undefined);
-      setBrowseInitialized(data.initialized === true);
-      setEntries(data.entries ?? []);
-      setEditingPath(false);
-    } else {
-      setErr(data.error ?? 'Browse failed');
-    }
+  const onBrowsed = useCallback((draft: string, ok: boolean) => {
+    setPathDraft(draft);
+    if (ok) setEditingPath(false);
   }, []);
+  const switched = useRef(props.onSwitched);
+  useEffect(() => {switched.current = props.onSwitched;}, [props.onSwitched]);
+  const onSwitched = useCallback(() => {
+    close.current();
+    switched.current?.();
+  }, []);
+  const { view, busy, log, err, setErr, newName, setNewName, loadBrowse, doSwitch, doMkdir, doInit } = useWorkspaceBrowser({
+    onSwitched,
+    onBrowsed,
+  });
+  /** The folder on screen. Path, parent, flag and entries change together, only from a successful browse. */
+  const { path: browsePath, parent, initialized: browseInitialized, entries } = view;
 
   useEffect(() => {
     void (async () => {
       const data = await fetchWorkspaceCurrent();
+      if (!data.ok && data.error) setErr(data.error);
       if (data.workspace?.path) {
         const shown = displayPath(data.workspace.path);
         setCurrentPath(shown);
-        setBrowsePath(shown);
         setPathDraft(shown);
+        void loadBrowse(shown);
       }
       if (data.recent) setRecent(data.recent);
     })();
     // Do not autofocus the filter — on mobile that opens the keyboard and
     // steals attention from Recent / browse. Users tap the field when needed.
-  }, []);
-
-  useEffect(() => {
-    if (browsePath) void loadBrowse(browsePath);
-  }, [browsePath, loadBrowse]);
+  }, [loadBrowse, setErr]);
 
   const crumbs = useMemo(() => pathBreadcrumbs(browsePath), [browsePath]);
 
@@ -91,63 +74,12 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
       setPathDraft(browsePath);
       return;
     }
-    setBrowsePath(next);
+    void loadBrowse(next);
   }
 
   useEffect(() => {
     if (modal.current) return containOverlayFocus(modal.current, () => close.current());
   }, []);
-
-  async function doSwitch(path: string) {
-    setBusy('switch');
-    setErr(null);
-    const res = await switchWorkspace(path);
-    setBusy(null);
-    if (res.ok && res.reloading) {
-      window.location.reload();
-      return;
-    }
-    if (res.needs_init) {
-      setErr('Not an ax project yet — use Initialize below.');
-      setBrowsePath(path);
-      return;
-    }
-    if (!res.ok) {
-      setErr(res.error ?? 'Switch failed');
-      return;
-    }
-    onClose();
-    notifyWorkspaceSwitched(res.path);
-    onSwitched?.();
-  }
-
-  async function doMkdir() {
-    if (!newName.trim() || !browsePath) return;
-    setBusy('mkdir');
-    setErr(null);
-    const res = await mkdirWorkspace(browsePath, newName.trim());
-    setBusy(null);
-    if (!res.ok) {
-      setErr(res.error ?? 'Create failed');
-      return;
-    }
-    setNewName('');
-    await loadBrowse(res.path ?? browsePath);
-  }
-
-  async function doInit(path: string) {
-    setBusy('init');
-    setLog([]);
-    setErr(null);
-    await streamWorkspaceInit(path, (ev) => {
-      if (ev.type === 'line') setLog((l) => [...l, ev.text]);
-      if (ev.type === 'done') {
-        setBusy(null);
-        if (!ev.ok) setErr(ev.error ?? 'Init failed');
-        else if (ev.initialized) void doSwitch(path);
-      }
-    });
-  }
 
   const axRecent = recent.filter((r) => r.initialized);
   const needle = filter.trim().toLowerCase();
@@ -225,7 +157,7 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
                 <button
                   type="button"
                   className="btn btn-subtle btn-sm"
-                  onClick={() => setBrowsePath(parent)}
+                  onClick={() => void loadBrowse(parent)}
                   disabled={!!busy}
                   title="Parent folder"
                 >
@@ -264,7 +196,7 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
                       <button
                         type="button"
                         className={`project-browser-crumb${i === crumbs.length - 1 ? ' project-browser-crumb--current' : ''}`}
-                        onClick={() => (i === crumbs.length - 1 ? setEditingPath(true) : setBrowsePath(c.path))}
+                        onClick={() => (i === crumbs.length - 1 ? setEditingPath(true) : void loadBrowse(c.path))}
                         disabled={!!busy}
                         title={c.path}
                       >
@@ -328,7 +260,7 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
                 <button
                   type="button"
                   className="project-browser-row-main"
-                  onClick={() => (e.initialized ? void doSwitch(e.path) : setBrowsePath(displayPath(e.path)))}
+                  onClick={() => (e.initialized ? void doSwitch(e.path) : void loadBrowse(displayPath(e.path)))}
                   disabled={!!busy}
                   title={displayPath(e.path)}
                 >
@@ -342,7 +274,7 @@ export default function ProjectBrowserModal({ onClose, onSwitched }: Props) {
                   <button
                     type="button"
                     className="btn btn-subtle btn-sm project-browser-row-enter"
-                    onClick={() => setBrowsePath(displayPath(e.path))}
+                    onClick={() => void loadBrowse(displayPath(e.path))}
                     disabled={!!busy}
                     title="Open folder"
                   >

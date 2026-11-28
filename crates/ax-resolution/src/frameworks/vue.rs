@@ -1,6 +1,9 @@
 //! Vue / Nuxt route extraction + component resolution - CG: frameworks/vue.ts.
 
 use std::path::Path;
+use std::sync::OnceLock;
+
+use regex::Regex;
 
 use ax_db::queries::QueryBuilder;
 use ax_types::{Language, Node, NodeKind, ReferenceKind};
@@ -57,13 +60,22 @@ pub fn detect(project_root: &Path, file_paths: &[String]) -> bool {
     file_paths.iter().any(|f| f.ends_with(".vue"))
 }
 
+/// Nuxt nodes for one file: pages from `.vue` files under `pages/`, API
+/// routes and middleware only from JS/TS files under `server/api/` and
+/// `middleware/`. Files in other languages (a Rust `middleware/` folder in
+/// the same repo, say) get nothing.
 pub fn extract_file(file_path: &str, _content: &str) -> FrameworkExtractResult {
     let mut out = FrameworkExtractResult::default();
-    let now = now_ms();
     let normalized = file_path.replace('\\', "/");
+    let is_vue = normalized.ends_with(".vue");
+    let is_script =
+        is_js_family(&normalized) || normalized.ends_with(".mts") || normalized.ends_with(".cts");
+    if !is_vue && !is_script {
+        return out;
+    }
+    let now = now_ms();
 
-    let pages_re = regex::Regex::new(r"(?:^|/)pages/").expect("pages segment");
-    if let Some(m) = pages_re.find(&normalized) {
+    if let Some(m) = pages_re().find(&normalized) {
         if normalized.ends_with(".vue") {
             let after_pages = m.end();
             if let Some(route_path) = file_path_to_nuxt_route(&normalized, after_pages) {
@@ -80,8 +92,7 @@ pub fn extract_file(file_path: &str, _content: &str) -> FrameworkExtractResult {
         }
     }
 
-    let api_re = regex::Regex::new(r"(?:^|/)server/api/").expect("api segment");
-    if let Some(m) = api_re.find(&normalized) {
+    if let Some(m) = api_re().find(&normalized).filter(|_| is_script) {
         let after_api = &normalized[m.end()..];
         let mut route_name = after_api
             .rsplit_once('.')
@@ -99,13 +110,7 @@ pub fn extract_file(file_path: &str, _content: &str) -> FrameworkExtractResult {
         route_name = route_name.trim_end_matches("/index").to_string();
         let api_route = format!("/api/{}", route_name);
         let qualified = format!("{}::route:{}", file_path, api_route);
-        let lang = if normalized.ends_with(".vue") {
-            Language::Vue
-        } else if is_js_family(file_path) {
-            language_for_vue_sidecar(file_path)
-        } else {
-            Language::Unknown
-        };
+        let lang = language_for_vue_sidecar(&normalized);
         out.nodes.push(make_route_node(
             file_path,
             &stable_node_id(file_path, &qualified),
@@ -116,18 +121,11 @@ pub fn extract_file(file_path: &str, _content: &str) -> FrameworkExtractResult {
         ));
     }
 
-    let mw_re = regex::Regex::new(r"(?:^|/)middleware/").expect("middleware segment");
-    if let Some(m) = mw_re.find(&normalized) {
+    if let Some(m) = mw_re().find(&normalized).filter(|_| is_script) {
         let after = &normalized[m.end()..];
         let name = after.rsplit_once('.').map(|(s, _)| s).unwrap_or(after);
         let qualified = format!("{}::middleware:{}", file_path, name);
-        let lang = if normalized.ends_with(".vue") {
-            Language::Vue
-        } else if is_js_family(file_path) {
-            language_for_vue_sidecar(file_path)
-        } else {
-            Language::Unknown
-        };
+        let lang = language_for_vue_sidecar(&normalized);
         out.nodes.push(Node {
             id: stable_node_id(file_path, &qualified),
             kind: NodeKind::Function,
@@ -232,8 +230,27 @@ fn make_route_node(
     }
 }
 
+fn pages_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?:^|/)pages/").expect("pages segment"))
+}
+
+fn api_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?:^|/)server/api/").expect("api segment"))
+}
+
+fn mw_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?:^|/)middleware/").expect("middleware segment"))
+}
+
 fn language_for_vue_sidecar(file_path: &str) -> Language {
-    if file_path.ends_with(".ts") || file_path.ends_with(".mts") {
+    if file_path.ends_with(".ts")
+        || file_path.ends_with(".tsx")
+        || file_path.ends_with(".mts")
+        || file_path.ends_with(".cts")
+    {
         Language::Typescript
     } else {
         Language::Javascript
@@ -347,6 +364,25 @@ mod tests {
     fn nuxt_api_route() {
         let r = extract_file("server/api/hello.get.ts", "");
         assert!(r.nodes.iter().any(|n| n.name == "/api/hello"));
+    }
+    #[test]
+    fn non_js_files_get_no_nuxt_nodes() {
+        for path in [
+            "backend/src/middleware/auth.rs",
+            "server/api/users.go",
+            "services/middleware/limits.py",
+            "docs/server/api/intro.md",
+        ] {
+            let r = extract_file(path, "");
+            assert!(r.nodes.is_empty(), "{path}: {:?}", r.nodes);
+        }
+    }
+    #[test]
+    fn nuxt_middleware_in_js_is_kept() {
+        let r = extract_file("middleware/auth.ts", "");
+        assert_eq!(r.nodes.len(), 1);
+        assert_eq!(r.nodes[0].name, "auth");
+        assert_eq!(r.nodes[0].language, Language::Typescript);
     }
     #[test]
     fn nuxt_catch_all_route() {

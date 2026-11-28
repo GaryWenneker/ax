@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { chooseSelect } from './chooseSelect';
+import { baseReply, shipConfigStub, statsStub } from './fixtures';
 
 if (process.env.AX_CHROME_EXECUTABLE) {
   test.use({ launchOptions: { executablePath: process.env.AX_CHROME_EXECUTABLE } });
@@ -44,9 +45,10 @@ async function accessFixture(page: Page, options: { readonly?: boolean; failScop
     };
     else if (path === '/api/access/nodes/local/interfaces') data = { interfaces: [{ name: 'loopback', address: '127.0.0.1', loopback: true }] };
     else if (path === '/api/access/nodes') data = { nodes, local: { node_id: 'primary-local', role: 'primary', sync_state: 'running' } };
-    else if (path === '/api/ship/config') data = { config: { ship: { target_branch: 'main', web_port: 7070 }, remote: { provider: 'github' }, quality_gate: { steps: [], tests: { runner: 'cargo test' } }, sonar: {}, ui: {} } };
-    else if (path === '/api/stats') data = { readonly: options.readonly ?? false, project_name: 'Demo project', node_count: 0, edge_count: 0, file_count: 0, db_size_bytes: 0, languages: [] };
+    else if (path === '/api/ship/config') data = shipConfigStub();
+    else if (path === '/api/stats') data = statsStub({ readonly: options.readonly ?? false, project_name: 'Demo project' });
     else if (path === '/api/ship/review-language') data = { code: 'en', languages: [] };
+    else data = baseReply(path);
     await route.fulfill({ status: data === undefined ? 404 : 200, json: data ?? { error: 'Fixture endpoint not provided' } });
   });
   await page.addInitScript(() => { localStorage.setItem('ax-theme', 'azure-light'); localStorage.setItem('ax-theme-mint-v2', '1'); });

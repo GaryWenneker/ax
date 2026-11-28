@@ -32,6 +32,8 @@ export function LabelAutocomplete({
   const menuRef = useRef<HTMLUListElement>(null);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
+  /** True once the user moved the active option with the arrows or the pointer. */
+  const [navigated, setNavigated] = useState(false);
 
   const selectedSet = useMemo(() => new Set(selected.map(norm)), [selected]);
 
@@ -45,6 +47,7 @@ export function LabelAutocomplete({
 
   useEffect(() => {
     setActive(0);
+    setNavigated(false);
   }, [query, open, suggestions.length]);
 
   const menuOpen = open && suggestions.length > 0;
@@ -84,11 +87,13 @@ export function LabelAutocomplete({
     if (e.key === 'ArrowDown') {
       if (!open && suggestions.length) setOpen(true);
       e.preventDefault();
+      if (open) setNavigated(true);
       setActive((i) => Math.min(i + 1, Math.max(suggestions.length - 1, 0)));
       return;
     }
     if (e.key === 'ArrowUp') {
       e.preventDefault();
+      setNavigated(true);
       setActive((i) => Math.max(i - 1, 0));
       return;
     }
@@ -98,6 +103,11 @@ export function LabelAutocomplete({
     }
     if (e.key === 'Backspace' && !query && selected.length > 0) {
       removeTag(selected[selected.length - 1]!);
+      return;
+    }
+    if (e.key === 'Tab' && !navigated && !query.trim()) {
+      // Moving past the field: close the menu and let focus continue.
+      setOpen(false);
       return;
     }
     if (e.key === 'Enter' || e.key === 'Tab') {
@@ -149,6 +159,7 @@ export function LabelAutocomplete({
           aria-autocomplete="list"
           aria-expanded={open}
           aria-controls={listId}
+          aria-activedescendant={menuOpen ? `${listId}-opt-${active}` : undefined}
           role="combobox"
           autoComplete="off"
           onChange={(e) => {
@@ -162,11 +173,14 @@ export function LabelAutocomplete({
       {menuOpen && createPortal(
         <ul ref={menuRef} id={listId} className="label-ac-menu" role="listbox">
           {suggestions.map((opt, i) => (
-            <li key={opt} role="option" aria-selected={i === active}>
+            <li key={opt} id={`${listId}-opt-${i}`} role="option" aria-selected={i === active}>
               <button
                 type="button"
                 className={`label-ac-option${i === active ? ' active' : ''}`}
-                onMouseEnter={() => setActive(i)}
+                onMouseEnter={() => {
+                  setActive(i);
+                  setNavigated(true);
+                }}
                 onMouseDown={(e) => {
                   e.preventDefault();
                   addTag(opt);

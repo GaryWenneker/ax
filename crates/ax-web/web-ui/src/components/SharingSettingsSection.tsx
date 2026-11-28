@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import ModalShell from './ModalShell';
+import { PWA_OPTIN_KEY, resolvePwaOptIn } from '../lib/pwaOptIn';
 
 const PWA_DISMISS_KEY = 'ax-pwa-install-dismissed';
-const PWA_OPTIN_KEY = 'ax-pwa-optin';
 
 function isStandalone(): boolean {
   if (typeof window === 'undefined') return false;
@@ -30,9 +30,11 @@ export default function SharingSettingsSection() {
   const [pwaOptIn, setPwaOptIn] = useState(
     () =>
       typeof localStorage !== 'undefined' &&
-      (localStorage.getItem(PWA_OPTIN_KEY) === '1' ||
-        new URLSearchParams(window.location.search).has('pwa') ||
-        isStandalone()),
+      resolvePwaOptIn(
+        new URLSearchParams(window.location.search).get('pwa'),
+        localStorage.getItem(PWA_OPTIN_KEY) === '1',
+        isStandalone(),
+      ).enable,
   );
   const [deferredPrompt, setDeferredPrompt] = useState<{ prompt: () => Promise<void> } | null>(
     null,

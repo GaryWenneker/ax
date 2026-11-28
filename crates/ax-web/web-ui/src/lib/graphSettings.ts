@@ -76,7 +76,57 @@ function writeGraphSettingsNow(
   storage: StorageLike | null,
   key: string,
 ): void {
-  storage?.setItem(key, JSON.stringify(settings));
+  try {
+    storage?.setItem(key, JSON.stringify(settings));
+  } catch {
+    // Storage is full or blocked: the settings stay in memory for this page.
+  }
+}
+
+type NumberKey = {
+  [K in keyof GraphSettings]: GraphSettings[K] extends number ? K : never;
+}[keyof GraphSettings];
+type BooleanKey = {
+  [K in keyof GraphSettings]: GraphSettings[K] extends boolean ? K : never;
+}[keyof GraphSettings];
+
+/** Slider ranges from the graph settings panel; stored numbers are clamped to them. */
+const NUMBER_RANGES: Record<NumberKey, readonly [number, number]> = {
+  textFadeThreshold: [-3, 3],
+  nodeSize: [0.1, 5],
+  linkThickness: [0.1, 5],
+  centerForce: [0, 1],
+  repelForce: [0, 20],
+  linkForce: [0, 1],
+  linkDistance: [30, 500],
+};
+
+const BOOLEAN_KEYS: readonly BooleanKey[] = ['labels', 'attachments', 'existingOnly', 'orphans', 'arrows'];
+
+function isGroup(value: unknown): value is GraphGroup {
+  if (!value || typeof value !== 'object') return false;
+  const g = value as Record<string, unknown>;
+  return typeof g.query === 'string' && typeof g.color === 'string';
+}
+
+/** Build settings from stored JSON, keeping each valid field and defaulting the rest. */
+function sanitizeGraphSettings(parsed: Record<string, unknown>): GraphSettings {
+  const out: GraphSettings = { ...DEFAULT_GRAPH_SETTINGS, groups: [] };
+  if (typeof parsed.search === 'string') out.search = parsed.search;
+  for (const k of BOOLEAN_KEYS) {
+    const v = parsed[k];
+    if (typeof v === 'boolean') out[k] = v;
+  }
+  for (const k of Object.keys(NUMBER_RANGES) as NumberKey[]) {
+    const v = parsed[k];
+    if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+    const [min, max] = NUMBER_RANGES[k];
+    out[k] = Math.min(max, Math.max(min, v));
+  }
+  if (Array.isArray(parsed.groups)) {
+    out.groups = parsed.groups.filter(isGroup).map(g => ({ query: g.query, color: g.color }));
+  }
+  return out;
 }
 
 function flushPending(storage: StorageLike | null, key: string): void {
@@ -115,14 +165,16 @@ export function loadGraphSettings(
   key: string = GRAPH_SETTINGS_KEY,
 ): GraphSettings {
   if (storage) flushPending(storage, key);
-  const raw = storage?.getItem(key);
-  if (!raw) return { ...DEFAULT_GRAPH_SETTINGS };
   try {
+    const raw = storage?.getItem(key);
+    if (!raw) return { ...DEFAULT_GRAPH_SETTINGS, groups: [] };
     const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return { ...DEFAULT_GRAPH_SETTINGS };
-    return { ...DEFAULT_GRAPH_SETTINGS, ...(parsed as Partial<GraphSettings>) };
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { ...DEFAULT_GRAPH_SETTINGS, groups: [] };
+    }
+    return sanitizeGraphSettings(parsed as Record<string, unknown>);
   } catch {
-    return { ...DEFAULT_GRAPH_SETTINGS };
+    return { ...DEFAULT_GRAPH_SETTINGS, groups: [] };
   }
 }
 

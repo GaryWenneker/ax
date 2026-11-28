@@ -147,6 +147,9 @@ impl CallbackSynthesizer {
             Some(paths) => paths.iter().map(|s| s.as_str()).collect(),
             None => std::collections::HashSet::new(),
         };
+        // Project-wide lookups, shared by every file: name -> the only
+        // component with that name, or None when there are zero or several.
+        let mut unique_by_name: HashMap<String, Option<String>> = HashMap::new();
         for file in files {
             if !scoped.is_empty() && !scoped.contains(file.path.as_str()) {
                 continue;
@@ -154,8 +157,7 @@ impl CallbackSynthesizer {
             if !is_js_family(&file.path) {
                 continue;
             }
-            let full = project_root.join(&file.path);
-            let content = std::fs::read_to_string(&full).unwrap_or_default();
+            let content = file_source(queries, project_root, &file.path).await?;
             if content.is_empty() || (!content.contains("</") && !content.contains("/>")) {
                 continue;
             }
@@ -165,6 +167,7 @@ impl CallbackSynthesizer {
             if parents.is_empty() {
                 continue;
             }
+            let scope_names = file_component_scope(queries, &nodes).await?;
 
             for parent in parents {
                 let src = slice_lines(&content, parent.start_line, parent.end_line);
@@ -178,28 +181,33 @@ impl CallbackSynthesizer {
                         break;
                     }
                     let name = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-                    if name.is_empty() {
+                    if name.is_empty() || !seen.insert(name.to_string()) {
                         continue;
                     }
-                    let child_nodes = queries.get_nodes_by_name(name).await.unwrap_or_default();
-                    let child = child_nodes.iter().find(|n| {
-                        matches!(
-                            n.kind,
-                            NodeKind::Component | NodeKind::Function | NodeKind::Class
-                        )
-                    });
-                    if child.is_none() || child.unwrap().id == parent.id {
+                    let child_id = match scope_names.get(name) {
+                        Some(id) => Some(id.clone()),
+                        None => {
+                            if !unique_by_name.contains_key(name) {
+                                let found = queries.get_nodes_by_name(name).await?;
+                                let mut ids = found.iter().filter(|n| is_jsx_child(n));
+                                let only = match (ids.next(), ids.next()) {
+                                    (Some(n), None) => Some(n.id.clone()),
+                                    _ => None,
+                                };
+                                unique_by_name.insert(name.to_string(), only);
+                            }
+                            unique_by_name[name].clone()
+                        }
+                    };
+                    let Some(child_id) = child_id else {
+                        continue;
+                    };
+                    if child_id == parent.id {
                         continue;
                     }
-                    let child = child.unwrap();
-                    let key = format!("{}>{}", parent.id, child.id);
-                    if seen.contains(&key) {
-                        continue;
-                    }
-                    seen.insert(key);
                     let edge = Edge {
                         source: parent.id.clone(),
-                        target: child.id.clone(),
+                        target: child_id,
                         kind: EdgeKind::Calls,
                         metadata: None,
                         line: Some(parent.start_line),
@@ -214,6 +222,54 @@ impl CallbackSynthesizer {
         }
         Ok(())
     }
+}
+
+/// Source of an indexed file: the stored copy, else the file on disk.
+async fn file_source(
+    queries: &QueryBuilder,
+    project_root: &Path,
+    rel: &str,
+) -> Result<String, ax_utils::errors::AxError> {
+    if let Some(stored) = queries.get_file_content(rel).await? {
+        return Ok(stored.content);
+    }
+    Ok(std::fs::read_to_string(project_root.join(rel)).unwrap_or_default())
+}
+
+/// Components a file can name in JSX: its own definitions, then what it imports.
+/// A same-file definition wins over an import with the same name.
+async fn file_component_scope(
+    queries: &QueryBuilder,
+    nodes: &[Node],
+) -> Result<HashMap<String, String>, ax_utils::errors::AxError> {
+    let mut scope: HashMap<String, String> = HashMap::new();
+    let mut imported = Vec::new();
+    for file_node in nodes.iter().filter(|n| n.kind == NodeKind::File) {
+        for e in queries
+            .get_outgoing_edges(&file_node.id, Some(&[EdgeKind::Imports]))
+            .await?
+        {
+            imported.push(e.target);
+        }
+    }
+    if !imported.is_empty() {
+        for n in queries.get_nodes_by_ids(&imported).await? {
+            if is_jsx_child(&n) {
+                scope.insert(n.name.clone(), n.id.clone());
+            }
+        }
+    }
+    for n in nodes.iter().filter(|n| is_jsx_child(n)) {
+        scope.insert(n.name.clone(), n.id.clone());
+    }
+    Ok(scope)
+}
+
+fn is_jsx_child(n: &Node) -> bool {
+    matches!(
+        n.kind,
+        NodeKind::Component | NodeKind::Function | NodeKind::Class
+    )
 }
 
 fn is_jsx_parent(n: &Node) -> bool {
