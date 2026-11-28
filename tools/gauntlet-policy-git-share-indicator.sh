@@ -16,14 +16,14 @@ grep -q 'GitShareDot' crates/ax-web/web-ui/src/pages/PolicySkills.tsx \
   || { echo "FAIL: Skills missing GitShareDot" >&2; exit 1; }
 grep -q 'GitShareStatus' crates/ax-web/web-ui/src/components/PolicyMetaView.tsx \
   || { echo "FAIL: meta missing GitShareStatus" >&2; exit 1; }
-grep -q 'git-share-dot' crates/ax-web/web-ui/src/index.css \
+grep -q 'git-share-dot' crates/ax-web/web-ui/src/styles/13-policy.css \
   || { echo "FAIL: missing git-share-dot CSS" >&2; exit 1; }
 
 echo "== tsc =="
 (cd crates/ax-web/web-ui && npx tsc --noEmit)
 
 echo "== negative control: the wiring checks fail on a broken copy =="
-negative_control git-share-css crates/ax-web/web-ui/src/index.css 'git-share-dot' 'git-share-mark' \
+negative_control git-share-css crates/ax-web/web-ui/src/styles/13-policy.css 'git-share-dot' 'git-share-mark' \
   grep -q 'git-share-dot'
 negative_control meta-status crates/ax-web/web-ui/src/components/PolicyMetaView.tsx 'GitShareStatus' 'GitShareState' \
   grep -q 'GitShareStatus'

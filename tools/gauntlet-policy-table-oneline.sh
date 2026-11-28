@@ -5,7 +5,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 source "$ROOT/scripts/lib/mutate.sh"
 source "$ROOT/scripts/lib/negative-control.sh"
-CSS="$ROOT/crates/ax-web/web-ui/src/index.css"
+# The web UI styles are split over src/styles/*.css: the policy table tags live in
+# 13-policy.css, the table sizing in 21-calm-lists.css.
+POLICY_CSS="$ROOT/crates/ax-web/web-ui/src/styles/13-policy.css"
+CSS="$ROOT/crates/ax-web/web-ui/src/styles/21-calm-lists.css"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
@@ -19,11 +22,11 @@ grep -q 'compact items=' crates/ax-web/web-ui/src/pages/PolicyRules.tsx \
   && fail "Rules table must not use compact TagList"
 grep -q 'compact items=' crates/ax-web/web-ui/src/pages/PolicySkills.tsx \
   && fail "Skills table must not use compact TagList"
-grep -q 'flex-wrap: nowrap' "$CSS" || fail "missing nowrap on policy tag row"
-if grep -A8 '\.policy-table-tags \.policy-view-tags' "$CSS" | grep -q 'flex-wrap: wrap'; then
+grep -q 'flex-wrap: nowrap' "$POLICY_CSS" || fail "missing nowrap on policy tag row"
+if grep -A8 '\.policy-table-tags \.policy-view-tags' "$POLICY_CSS" | grep -q 'flex-wrap: wrap'; then
   fail "policy-table-tags still wraps"
 fi
-grep -q 'padding: 2px 8px' "$CSS" || fail "dense table padding not 2px 8px"
+grep -q 'padding: 2px 8px' "$POLICY_CSS" || fail "dense table padding not 2px 8px"
 grep -q 'table.policy-table' "$CSS" || fail "missing table.policy-table crush fix"
 grep -q 'width: max-content' "$CSS" || fail "policy-table must size to content"
 grep -q 'flex-flow: row nowrap' "$CSS" || fail "missing flex-flow nowrap on table tags"
