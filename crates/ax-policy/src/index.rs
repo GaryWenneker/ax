@@ -232,14 +232,16 @@ impl StoredState {
     }
 }
 
+// The queries below interpolate only fixed table and column names (`PruneTable::names`,
+// `RULE_SELECT`, `SKILL_SELECT`) or a `?` placeholder list, so `AssertSqlSafe` holds.
 async fn stored_state(
     conn: &mut sqlx::SqliteConnection,
     table: PruneTable,
 ) -> Result<std::collections::HashMap<String, StoredState>, AxError> {
     let (table_name, key) = table.names();
-    let rows: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(&format!(
+    let rows: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {key}, content_hash, COALESCE(scope, 'project'), source_path, stub_path FROM {table_name}"
-    ))
+    )))
     .fetch_all(&mut *conn)
     .await
     .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
@@ -832,9 +834,9 @@ async fn stored_rows(
         Option<String>,
     );
     let (table_name, key) = table.names();
-    let rows: Vec<Row> = sqlx::query_as(&format!(
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {key}, content_hash, COALESCE(scope, 'project'), source_path, stub_path, storage, properties FROM {table_name}"
-    ))
+    )))
     .fetch_all(&mut *conn)
     .await
     .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
@@ -1051,7 +1053,7 @@ async fn prune_hybrid(
             " AND source_path NOT IN ({p}) AND COALESCE(stub_path, '') NOT IN ({p})"
         ));
     }
-    let mut q = sqlx::query(&sql);
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
     for id in keep {
         q = q.bind(id);
     }
@@ -1079,11 +1081,12 @@ const SKILL_SELECT: &str = "SELECT name, description, COALESCE(always_apply, 0) 
          FROM policy_skills";
 
 pub async fn list_rules(pool: &SqlitePool) -> Result<Vec<PolicyRuleRow>, AxError> {
-    let rows =
-        sqlx::query_as::<_, RuleDbRow>(&format!("{RULE_SELECT} ORDER BY id COLLATE NOCASE ASC"))
-            .fetch_all(pool)
-            .await
-            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+    let rows = sqlx::query_as::<_, RuleDbRow>(sqlx::AssertSqlSafe(format!(
+        "{RULE_SELECT} ORDER BY id COLLATE NOCASE ASC"
+    )))
+    .fetch_all(pool)
+    .await
+    .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     Ok(rows.into_iter().map(RuleDbRow::into_row).collect())
 }
 
@@ -1101,9 +1104,9 @@ pub async fn list_rules_enriched(
 }
 
 pub async fn list_skills(pool: &SqlitePool) -> Result<Vec<PolicySkillRow>, AxError> {
-    let rows = sqlx::query_as::<_, SkillDbRow>(&format!(
+    let rows = sqlx::query_as::<_, SkillDbRow>(sqlx::AssertSqlSafe(format!(
         "{SKILL_SELECT} ORDER BY name COLLATE NOCASE ASC"
-    ))
+    )))
     .fetch_all(pool)
     .await
     .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
@@ -1155,20 +1158,23 @@ pub fn enrich_skill_row(row: &mut PolicySkillRow, default: PolicyStorage) {
 }
 
 pub async fn get_rule(pool: &SqlitePool, id: &str) -> Result<Option<PolicyRuleRow>, AxError> {
-    let row = sqlx::query_as::<_, RuleDbRow>(&format!("{RULE_SELECT} WHERE id = ?"))
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+    let row =
+        sqlx::query_as::<_, RuleDbRow>(sqlx::AssertSqlSafe(format!("{RULE_SELECT} WHERE id = ?")))
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     Ok(row.map(RuleDbRow::into_row))
 }
 
 pub async fn get_skill(pool: &SqlitePool, name: &str) -> Result<Option<PolicySkillRow>, AxError> {
-    let row = sqlx::query_as::<_, SkillDbRow>(&format!("{SKILL_SELECT} WHERE name = ?"))
-        .bind(name)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
+    let row = sqlx::query_as::<_, SkillDbRow>(sqlx::AssertSqlSafe(format!(
+        "{SKILL_SELECT} WHERE name = ?"
+    )))
+    .bind(name)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| AxError::Database(DatabaseError::new(e.to_string())))?;
     Ok(row.map(SkillDbRow::into_row))
 }
 
@@ -1754,19 +1760,20 @@ mod tests {
             .await
             .unwrap();
         for table in ["global_policy_rules", "global_policy_skills"] {
-            sqlx::query(&format!(
+            // Test-only: a literal table name.
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "CREATE TABLE {table} (project_id INTEGER NOT NULL, item_id TEXT NOT NULL,
                     payload TEXT NOT NULL, synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     level TEXT NOT NULL DEFAULT 'global', PRIMARY KEY (project_id, item_id))"
-            ))
+            )))
             .execute(&pool)
             .await
             .unwrap();
         }
         for (table, name, body, level) in rows {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "INSERT INTO {table} (project_id, item_id, payload, level) VALUES (1, ?, ?, ?)"
-            ))
+            )))
             .bind(name)
             .bind(serde_json::json!({ "body": body }).to_string())
             .bind(level)

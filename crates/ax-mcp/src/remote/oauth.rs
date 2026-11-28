@@ -168,9 +168,10 @@ impl OAuthStore {
             return Err("Only revoked, denied or expired connections can be removed".into());
         }
         for table in ["remote_oauth_tokens", "remote_oauth_used_refresh"] {
-            sqlx::query(&format!(
+            // Safe: `table` comes from the literal list above.
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "DELETE FROM {table} WHERE origin=? AND request_id=?"
-            ))
+            )))
             .bind(&self.origin)
             .bind(id)
             .execute(&mut *tx)
@@ -475,12 +476,13 @@ async fn register(
         if name.is_empty() || name.len()>160 || name.chars().any(char::is_control) {return Err("Invalid client name".into());}
         let mut tx=p.store.pool.begin().await.map_err(server)?;
         // Acquire the SQLite write lock before checking the public registration quota.
+        // `unused` and `oldest` below are literal SQL fragments; every value is bound.
         let unused="origin=? AND native=0 AND id NOT IN (SELECT client_id FROM remote_oauth_requests WHERE origin=?)";
-        sqlx::query(&format!("DELETE FROM remote_oauth_clients WHERE {unused} AND created<?")).bind(&p.store.origin).bind(&p.store.origin).bind(now()-UNUSED_CLIENT_TTL).execute(&mut *tx).await.map_err(server)?;
+        sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM remote_oauth_clients WHERE {unused} AND created<?"))).bind(&p.store.origin).bind(&p.store.origin).bind(now()-UNUSED_CLIENT_TTL).execute(&mut *tx).await.map_err(server)?;
         let count:i64=sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_clients WHERE origin=?").bind(&p.store.origin).fetch_one(&mut *tx).await.map_err(server)?;
         if count>=MAX_CLIENTS {
             // Make room by removing the oldest client that never started a sign-in.
-            let evicted=sqlx::query(&format!("DELETE FROM remote_oauth_clients WHERE rowid IN (SELECT rowid FROM remote_oauth_clients WHERE {unused} ORDER BY created, rowid LIMIT ?)")).bind(&p.store.origin).bind(&p.store.origin).bind(count-MAX_CLIENTS+1).execute(&mut *tx).await.map_err(server)?;
+            let evicted=sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM remote_oauth_clients WHERE rowid IN (SELECT rowid FROM remote_oauth_clients WHERE {unused} ORDER BY created, rowid LIMIT ?)"))).bind(&p.store.origin).bind(&p.store.origin).bind(count-MAX_CLIENTS+1).execute(&mut *tx).await.map_err(server)?;
             if count-(evicted.rows_affected() as i64)>=MAX_CLIENTS {return Err("Client registration capacity reached".into());}
         }
         let id=uuid::Uuid::new_v4().to_string();
@@ -527,14 +529,14 @@ async fn authorize(
         // One source makes room among its own requests first, whatever the client.
         if source!=UNKNOWN_SOURCE {
             let theirs:i64=sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_requests WHERE origin=? AND status='pending' AND source=?").bind(&p.store.origin).bind(&source).fetch_one(&mut *tx).await.map_err(server)?;
-            if theirs>=MAX_PENDING_PER_SOURCE {sqlx::query(&format!("{oldest} AND source=? ORDER BY expires, rowid LIMIT ?)")).bind(&p.store.origin).bind(&source).bind(theirs-MAX_PENDING_PER_SOURCE+1).execute(&mut *tx).await.map_err(server)?;}
+            if theirs>=MAX_PENDING_PER_SOURCE {sqlx::query(sqlx::AssertSqlSafe(format!("{oldest} AND source=? ORDER BY expires, rowid LIMIT ?)"))).bind(&p.store.origin).bind(&source).bind(theirs-MAX_PENDING_PER_SOURCE+1).execute(&mut *tx).await.map_err(server)?;}
         }
         if !native {
             let mine:i64=sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_requests WHERE origin=? AND status='pending' AND client_id=?").bind(&p.store.origin).bind(&q.client_id).fetch_one(&mut *tx).await.map_err(server)?;
-            if mine>=MAX_PENDING_PER_CLIENT {sqlx::query(&format!("{oldest} AND client_id=? ORDER BY expires, rowid LIMIT ?)")).bind(&p.store.origin).bind(&q.client_id).bind(mine-MAX_PENDING_PER_CLIENT+1).execute(&mut *tx).await.map_err(server)?;}
+            if mine>=MAX_PENDING_PER_CLIENT {sqlx::query(sqlx::AssertSqlSafe(format!("{oldest} AND client_id=? ORDER BY expires, rowid LIMIT ?)"))).bind(&p.store.origin).bind(&q.client_id).bind(mine-MAX_PENDING_PER_CLIENT+1).execute(&mut *tx).await.map_err(server)?;}
         }
         let count:i64=sqlx::query_scalar("SELECT COUNT(*) FROM remote_oauth_requests WHERE origin=? AND status='pending'").bind(&p.store.origin).fetch_one(&mut *tx).await.map_err(server)?;
-        if count>=MAX_PENDING {sqlx::query(&format!("{oldest} ORDER BY expires, rowid LIMIT ?)")).bind(&p.store.origin).bind(count-MAX_PENDING+1).execute(&mut *tx).await.map_err(server)?;}
+        if count>=MAX_PENDING {sqlx::query(sqlx::AssertSqlSafe(format!("{oldest} ORDER BY expires, rowid LIMIT ?)"))).bind(&p.store.origin).bind(count-MAX_PENDING+1).execute(&mut *tx).await.map_err(server)?;}
         let id=uuid::Uuid::new_v4().to_string(); let nonce=secret(); let scope=if scope.contains(WRITE_SCOPE) {"ax:context ax:write"} else {CONTEXT_SCOPE};
         sqlx::query("INSERT INTO remote_oauth_requests(origin,id,nonce_hash,client_id,redirect,state,challenge,scope,project,resource,expires,source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").bind(&p.store.origin).bind(&id).bind(hash(&nonce)).bind(&q.client_id).bind(&q.redirect_uri).bind(&q.state).bind(&q.code_challenge).bind(scope).bind(&project.id).bind(&q.resource).bind(now()+600).bind(&source).execute(&mut *tx).await.map_err(server)?;
         tx.commit().await.map_err(server)?; Ok::<_,Fail>((id,nonce))

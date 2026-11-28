@@ -86,7 +86,9 @@ async fn execute_schema_statement(
     pool: &SqlitePool,
     sql: &str,
 ) -> Result<sqlx::sqlite::SqliteQueryResult, sqlx::Error> {
-    crate::with_busy_retry(|| async { sqlx::query(sql).execute(pool).await }).await
+    // Safe: callers pass statements split from the bundled `schema.sql`.
+    crate::with_busy_retry(|| async { sqlx::query(sqlx::AssertSqlSafe(sql)).execute(pool).await })
+        .await
 }
 #[cfg(test)]
 mod tests {

@@ -1050,22 +1050,24 @@ async fn record_approval(
         ", actor_member_id = ?2"
     };
     let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
-    let result = sqlx::query(&format!(
+    // Safe (both queries): `table` is `ApprovalSubject::table()` and `set_actor` a literal.
+    let result = sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE {table} SET approval = 'approved'{set_actor}
          WHERE id = ?1 AND approval = 'unapproved'"
-    ))
+    )))
     .bind(subject_id)
     .bind(actor_member_id)
     .execute(&mut *tx)
     .await
     .map_err(|error| error.to_string())?;
     if result.rows_affected() != 1 {
-        let approval: Option<String> =
-            sqlx::query_scalar(&format!("SELECT approval FROM {table} WHERE id = ?1"))
-                .bind(subject_id)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(|error| error.to_string())?;
+        let approval: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT approval FROM {table} WHERE id = ?1"
+        )))
+        .bind(subject_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|error| error.to_string())?;
         return Err(match approval.as_deref() {
             Some("approved") => format!("{} already approved", subject.as_str()),
             Some(other) => format!("{} is {other}", subject.as_str()),

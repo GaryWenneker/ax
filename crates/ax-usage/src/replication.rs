@@ -6,6 +6,11 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
 };
+// Dynamic SQL in this module is wrapped in `AssertSqlSafe` only when every piece is
+// trusted: table names come from `TABLES`, column names from the local schema
+// (`columns` on our own pool, intersected with the incoming PRAGMA list), the
+// filters are literal fragments with `?1` binds, `origin` passed `valid_id`, and the
+// local project path is quoted as a SQL literal with `''` escaping.
 const TABLES: &[&str] = &[
     "mcp_call_log",
     "mcp_session_index",
@@ -51,13 +56,15 @@ async fn columns(pool: &SqlitePool, table: &str) -> Result<Vec<String>, String> 
     if !TABLES.contains(&table) {
         return Err("Unknown history table".into());
     }
-    Ok(sqlx::query(&format!("PRAGMA table_info(\"{table}\")"))
-        .fetch_all(pool)
-        .await
-        .map_err(err)?
-        .iter()
-        .map(|r| r.get("name"))
-        .collect())
+    Ok(sqlx::query(sqlx::AssertSqlSafe(format!(
+        "PRAGMA table_info(\"{table}\")"
+    )))
+    .fetch_all(pool)
+    .await
+    .map_err(err)?
+    .iter()
+    .map(|r| r.get("name"))
+    .collect())
 }
 fn conversations() -> String {
     "SELECT conversation FROM native.ax_durable_scope WHERE project=?1 AND session NOT GLOB 'replica_*'".into()
@@ -152,9 +159,9 @@ async fn export_with(
         .map_err(err)?;
     let mut tx = conn.begin().await.map_err(err)?;
     for table in TABLES {
-        let remote: Vec<String> = sqlx::query_scalar(&format!(
+        let remote: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT name FROM native.pragma_table_info('{table}')"
-        ))
+        )))
         .fetch_all(&mut *tx)
         .await
         .map_err(err)?;
@@ -175,7 +182,7 @@ async fn export_with(
             .map(|c| portable(table, c))
             .collect::<Vec<_>>()
             .join(",");
-        sqlx::query(&format!("INSERT INTO main.\"{table}\" ({into}) SELECT {select} FROM native.\"{table}\" WHERE {} ORDER BY rowid",filter(table))).bind(&project).execute(&mut *tx).await.map_err(err)?;
+        sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO main.\"{table}\" ({into}) SELECT {select} FROM native.\"{table}\" WHERE {} ORDER BY rowid",filter(table)))).bind(&project).execute(&mut *tx).await.map_err(err)?;
     }
     tx.commit().await.map_err(err)?;
     sqlx::query("DETACH DATABASE native")
@@ -202,10 +209,12 @@ async fn export_with(
 async fn row_count(pool: &SqlitePool) -> Result<u64, String> {
     let mut total = 0u64;
     for table in TABLES {
-        let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM \"{table}\""))
-            .fetch_one(pool)
-            .await
-            .map_err(err)?;
+        let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM \"{table}\""
+        )))
+        .fetch_one(pool)
+        .await
+        .map_err(err)?;
         total = total
             .checked_add(count as u64)
             .ok_or("History count overflow")?;
@@ -262,9 +271,9 @@ async fn verify_with(path: &Path, expected_rows: u64, expected: &SqlitePool) -> 
             .iter()
             .any(|c| c == "project")
         {
-            let foreign: i64 = sqlx::query_scalar(&format!(
+            let foreign: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                 "SELECT COUNT(*) FROM \"{table}\" WHERE project IS NULL OR project!='project'"
-            ))
+            )))
             .fetch_one(&incoming)
             .await
             .map_err(err)?;
@@ -337,7 +346,7 @@ async fn project_with(
                     .then_some("session")
             });
             if let Some(kind) = kind {
-                let values:Vec<String>=sqlx::query_scalar(&format!("SELECT DISTINCT \"{column}\" FROM received_history.\"{table}\" WHERE \"{column}\" IS NOT NULL")).fetch_all(&mut *tx).await.map_err(err)?;
+                let values:Vec<String>=sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT DISTINCT \"{column}\" FROM received_history.\"{table}\" WHERE \"{column}\" IS NOT NULL"))).fetch_all(&mut *tx).await.map_err(err)?;
                 for value in values {
                     sqlx::query("INSERT OR IGNORE INTO ax_replica_strings VALUES (?,?,?)")
                         .bind(kind)
@@ -350,15 +359,15 @@ async fn project_with(
             }
         }
         if numeric(table) {
-            let ids: Vec<i64> = sqlx::query_scalar(&format!(
+            let ids: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                 "SELECT id FROM received_history.\"{table}\" ORDER BY id"
-            ))
+            )))
             .fetch_all(&mut *tx)
             .await
             .map_err(err)?;
-            let mut next: i64 = sqlx::query_scalar(&format!(
+            let mut next: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                 "SELECT COALESCE(MAX(id),0)+1 FROM main.\"{table}\""
-            ))
+            )))
             .fetch_one(&mut *tx)
             .await
             .map_err(err)?;
@@ -389,9 +398,9 @@ async fn project_with(
     let project = crate::context_cache::project_scope(root);
     let quote = |v: &str| v.replace('\'', "''");
     for table in TABLES.iter().filter(|table| !catalog(table)) {
-        let remote: Vec<String> = sqlx::query_scalar(&format!(
+        let remote: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT name FROM received_history.pragma_table_info('{table}')"
-        ))
+        )))
         .fetch_all(&mut *tx)
         .await
         .map_err(err)?;
@@ -420,7 +429,7 @@ async fn project_with(
             }
             column
         }).collect::<Vec<_>>().join(",");
-        sqlx::query(&format!("INSERT OR REPLACE INTO main.\"{table}\" ({into}) SELECT {select} FROM received_history.\"{table}\" r ORDER BY rowid")).execute(&mut *tx).await.map_err(err)?;
+        sqlx::query(sqlx::AssertSqlSafe(format!("INSERT OR REPLACE INTO main.\"{table}\" ({into}) SELECT {select} FROM received_history.\"{table}\" r ORDER BY rowid"))).execute(&mut *tx).await.map_err(err)?;
     }
     tx.commit().await.map_err(err)?;
     sqlx::query("DETACH DATABASE received_history")
@@ -482,9 +491,9 @@ pub async fn retain(
     let mut tx = conn.begin().await.map_err(err)?;
     for source in ["previous", "current"] {
         for table in TABLES.iter().filter(|table| !catalog(table)) {
-            let remote: Vec<String> = sqlx::query_scalar(&format!(
+            let remote: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                 "SELECT name FROM {source}.pragma_table_info('{table}')"
-            ))
+            )))
             .fetch_all(&mut *tx)
             .await
             .map_err(err)?;
@@ -497,7 +506,7 @@ pub async fn retain(
             if fields.is_empty() {
                 return Err(format!("History table {table} shares no columns"));
             }
-            sqlx::query(&format!("INSERT OR REPLACE INTO main.\"{table}\" ({fields}) SELECT {fields} FROM {source}.\"{table}\" ORDER BY rowid")).execute(&mut *tx).await.map_err(err)?;
+            sqlx::query(sqlx::AssertSqlSafe(format!("INSERT OR REPLACE INTO main.\"{table}\" ({fields}) SELECT {fields} FROM {source}.\"{table}\" ORDER BY rowid"))).execute(&mut *tx).await.map_err(err)?;
         }
     }
     tx.commit().await.map_err(err)?;

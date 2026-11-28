@@ -1539,7 +1539,7 @@ mod tests {
             .is_err());
     }
 
-    async fn scalar(pool: &SqlitePool, sql: &str) -> Option<String> {
+    async fn scalar(pool: &SqlitePool, sql: &'static str) -> Option<String> {
         sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
     }
 

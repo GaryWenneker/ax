@@ -69,7 +69,7 @@ pub fn router_hub(hub: WebHub) -> Router {
 }
 
 /// A missing table or database yields an empty part, never an error.
-async fn scalar(pool: &SqlitePool, sql: &str) -> String {
+async fn scalar(pool: &SqlitePool, sql: &'static str) -> String {
     sqlx::query_scalar::<_, String>(sql)
         .fetch_one(pool)
         .await

@@ -131,10 +131,11 @@ pub async fn checkpoint_truncate_nowait(pool: &SqlitePool) -> Result<(), sqlx::E
     let checkpoint = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
         .execute(&mut *conn)
         .await;
-    let restore = sqlx::query(&format!(
+    // Safe: the only interpolated value is an integer from `busy_timeout()`.
+    let restore = sqlx::query(sqlx::AssertSqlSafe(format!(
         "PRAGMA busy_timeout = {}",
         busy_timeout().as_millis()
-    ))
+    )))
     .execute(&mut *conn)
     .await;
     match checkpoint {
@@ -170,18 +171,22 @@ impl Database {
                         Box::pin(async move {
                             // Belt-and-suspenders: connect options set busy_timeout, but
                             // re-apply on every pooled connection (Windows / sqlx quirks).
-                            sqlx::query(&format!("PRAGMA busy_timeout = {timeout_ms}"))
-                                .execute(&mut *conn)
-                                .await?;
+                            // Safe: integer milliseconds computed above.
+                            sqlx::query(sqlx::AssertSqlSafe(format!(
+                                "PRAGMA busy_timeout = {timeout_ms}"
+                            )))
+                            .execute(&mut *conn)
+                            .await?;
                             sqlx::query("PRAGMA wal_autocheckpoint = 1000")
                                 .execute(&mut *conn)
                                 .await?;
                             // Shrink the -wal file back to this size after a
                             // checkpoint; a full index otherwise leaves a WAL
                             // larger than the database itself.
-                            sqlx::query(&format!(
+                            // Safe: integer constant.
+                            sqlx::query(sqlx::AssertSqlSafe(format!(
                                 "PRAGMA journal_size_limit = {WAL_SIZE_LIMIT_BYTES}"
-                            ))
+                            )))
                             .execute(&mut *conn)
                             .await?;
                             Ok(())

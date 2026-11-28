@@ -245,11 +245,11 @@ async fn hierarchy_schema_complete(pool: &SqlitePool) -> bool {
         return false;
     }
     for (table, column, _) in ADDED_COLUMNS {
-        let columns: Vec<String> =
-            sqlx::query_scalar(&format!("SELECT name FROM pragma_table_info('{table}')"))
-                .fetch_all(pool)
-                .await
-                .unwrap_or_default();
+        let columns: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info(?1)")
+            .bind(*table)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
         if !columns.iter().any(|name| name == column) {
             return false;
         }
@@ -272,7 +272,7 @@ pub async fn ensure_hierarchy_schema(pool: &SqlitePool) -> Result<(), String> {
 }
 
 /// Run each `;`-separated statement of a schema script.
-pub(crate) async fn run_schema(pool: &SqlitePool, script: &str) -> Result<(), String> {
+pub(crate) async fn run_schema(pool: &SqlitePool, script: &'static str) -> Result<(), String> {
     for statement in script.split(';') {
         let statement = statement.trim();
         if statement.is_empty() {
@@ -297,21 +297,22 @@ async fn migrate_hierarchy_schema(pool: &SqlitePool) -> Result<(), String> {
 
 async fn add_column_if_missing(
     pool: &SqlitePool,
-    table: &str,
-    column: &str,
-    definition: &str,
+    table: &'static str,
+    column: &'static str,
+    definition: &'static str,
 ) -> Result<(), String> {
-    let columns: Vec<String> =
-        sqlx::query_scalar(&format!("SELECT name FROM pragma_table_info('{table}')"))
-            .fetch_all(pool)
-            .await
-            .map_err(|error| error.to_string())?;
+    let columns: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info(?1)")
+        .bind(table)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| error.to_string())?;
     if columns.iter().any(|name| name == column) {
         return Ok(());
     }
-    sqlx::query(&format!(
+    // Safe: table, column and definition come from the `ADDED_COLUMNS` constant.
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "ALTER TABLE {table} ADD COLUMN {column} {definition}"
-    ))
+    )))
     .execute(pool)
     .await
     .map_err(|error| error.to_string())?;
@@ -789,7 +790,7 @@ pub async fn legacy_table_fingerprints(
             });
             continue;
         }
-        let rows = sqlx::query(sql)
+        let rows = sqlx::query(*sql)
             .fetch_all(pool)
             .await
             .map_err(|error| error.to_string())?;
@@ -2217,9 +2218,12 @@ mod tests {
         (dir, pool)
     }
 
-    async fn count(pool: &SqlitePool, table: &str) -> i64 {
+    async fn count(pool: &SqlitePool, table: &'static str) -> i64 {
         let sql = format!("SELECT COUNT(*) FROM {table}");
-        sqlx::query_scalar(&sql).fetch_one(pool).await.unwrap()
+        sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+            .fetch_one(pool)
+            .await
+            .unwrap()
     }
 
     fn sample(plan_body: &str) -> NewSpecPlan {

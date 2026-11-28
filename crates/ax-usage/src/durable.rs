@@ -766,12 +766,12 @@ type EntryQuery<'q> = sqlx::query::QueryAs<
     'q,
     sqlx::Sqlite,
     (i64, String, String, String, Option<i64>),
-    sqlx::sqlite::SqliteArguments<'q>,
+    sqlx::sqlite::SqliteArguments,
 >;
 
 async fn entry_rows<'q>(
     pool: &SqlitePool,
-    sql: &'q str,
+    sql: &'static str,
     bind: impl FnOnce(EntryQuery<'q>) -> EntryQuery<'q>,
 ) -> Result<Vec<DurableEntry>, String> {
     let rows = bind(sqlx::query_as(sql))

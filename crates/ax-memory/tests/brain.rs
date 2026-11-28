@@ -1422,10 +1422,10 @@ async fn archive_hits_resolve_through_an_index() {
     ax_memory::brain::index_archive_vector(db.pool(), &row.id)
         .await
         .unwrap();
-    let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(&format!(
+    let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "EXPLAIN QUERY PLAN {}",
         ax_memory::brain::ARCHIVE_HIT_SQL
-    ))
+    )))
     .bind("[1]")
     .fetch_all(db.pool())
     .await

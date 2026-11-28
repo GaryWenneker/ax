@@ -100,32 +100,34 @@ const NODE_EXISTS: &str = "EXISTS (SELECT 1 FROM nodes WHERE nodes.id = memory_a
 /// loses `orphan`, and one whose live body hash matches again loses `stale`.
 /// Returns `(newly_stale, newly_orphaned)`: anchors flagged by this run.
 pub async fn refresh_anchor_flags(pool: &SqlitePool) -> Result<(usize, usize), AxError> {
+    // Safe (all four statements): only the const fragments NODE_EXISTS and ANCHOR_DRIFTED
+    // are interpolated.
     let mut tx = pool.begin().await.map_err(|e| db_err(pool, e))?;
-    let orphan = sqlx::query(&format!(
+    let orphan = sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE memory_anchors SET orphan = 1 WHERE orphan = 0 AND NOT {NODE_EXISTS}"
-    ))
+    )))
     .execute(&mut *tx)
     .await
     .map_err(|e| db_err(pool, e))?
     .rows_affected();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE memory_anchors SET orphan = 0 WHERE orphan <> 0 AND {NODE_EXISTS}"
-    ))
+    )))
     .execute(&mut *tx)
     .await
     .map_err(|e| db_err(pool, e))?;
-    let stale = sqlx::query(&format!(
+    let stale = sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE memory_anchors SET stale = 1
          WHERE stale = 0 AND {NODE_EXISTS} AND {ANCHOR_DRIFTED}"
-    ))
+    )))
     .execute(&mut *tx)
     .await
     .map_err(|e| db_err(pool, e))?
     .rows_affected();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE memory_anchors SET stale = 0
          WHERE stale <> 0 AND {NODE_EXISTS} AND NOT {ANCHOR_DRIFTED}"
-    ))
+    )))
     .execute(&mut *tx)
     .await
     .map_err(|e| db_err(pool, e))?;

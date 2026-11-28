@@ -395,9 +395,13 @@ pub(crate) async fn open_pool_at(path: &std::path::Path) -> Result<SqlitePool, A
         .acquire_timeout(wait)
         .after_connect(move |conn, _meta| {
             Box::pin(async move {
-                sqlx::query(&format!("PRAGMA busy_timeout = {}", wait.as_millis()))
-                    .execute(&mut *conn)
-                    .await?;
+                // Safe: integer milliseconds.
+                sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "PRAGMA busy_timeout = {}",
+                    wait.as_millis()
+                )))
+                .execute(&mut *conn)
+                .await?;
                 Ok(())
             })
         })
@@ -443,7 +447,7 @@ pub(crate) async fn open_pool_at(path: &std::path::Path) -> Result<SqlitePool, A
         // "duplicate column name" is expected on already-migrated databases. Any
         // other failure (busy, read-only, disk full) leaves the column missing, so
         // it is returned and the schema version stays unstamped for a retry.
-        if let Err(error) = sqlx::query(stmt).execute(&pool).await {
+        if let Err(error) = sqlx::query(*stmt).execute(&pool).await {
             if !error.to_string().contains("duplicate column name") {
                 return Err(AxError::Database(DatabaseError::new(format!(
                     "usage migration `{stmt}`: {error}"
@@ -452,10 +456,13 @@ pub(crate) async fn open_pool_at(path: &std::path::Path) -> Result<SqlitePool, A
         }
     }
 
-    sqlx::query(&format!("PRAGMA user_version = {fingerprint}"))
-        .execute(&pool)
-        .await
-        .map_err(|e| AxError::Database(DatabaseError::new(format!("usage schema: {e}"))))?;
+    // Safe: `fingerprint` is an `i32` hash.
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "PRAGMA user_version = {fingerprint}"
+    )))
+    .execute(&pool)
+    .await
+    .map_err(|e| AxError::Database(DatabaseError::new(format!("usage schema: {e}"))))?;
 
     Ok(pool)
 }

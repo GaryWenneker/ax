@@ -2792,9 +2792,10 @@ pub(crate) mod tests {
         pool: &SqlitePool,
         table: &str,
     ) -> Vec<(String, String, i64, Option<String>, i64)> {
-        sqlx::query_as(&format!(
-            "SELECT name, type, \"notnull\", dflt_value, pk FROM pragma_table_info('{table}') ORDER BY cid"
-        ))
+        sqlx::query_as(
+            "SELECT name, type, \"notnull\", dflt_value, pk FROM pragma_table_info(?1) ORDER BY cid",
+        )
+        .bind(table.to_string())
         .fetch_all(pool)
         .await
         .unwrap()

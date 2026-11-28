@@ -206,12 +206,16 @@ async fn read_project(project: &SqlitePool) -> Result<ProjectRows> {
     })
 }
 
-async fn policy_rows(project: &SqlitePool, table: &str) -> Option<Vec<sqlx::sqlite::SqliteRow>> {
+async fn policy_rows(
+    project: &SqlitePool,
+    table: &'static str,
+) -> Option<Vec<sqlx::sqlite::SqliteRow>> {
     if !table_exists(project, table).await {
         return None;
     }
+    // Safe: `table` is a `'static` literal from `project_rows`.
     Some(
-        sqlx::query(&format!("SELECT * FROM {table}"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("SELECT * FROM {table}")))
             .fetch_all(project)
             .await
             .unwrap_or_default(),
@@ -234,16 +238,17 @@ async fn sync_policy_table(
     pid: i64,
     rows: &[sqlx::sqlite::SqliteRow],
     id_col: &str,
-    dest_table: &str,
+    dest_table: &'static str,
 ) -> Result<()> {
+    // Safe (all queries below): `dest_table` is a `'static` literal from `sync_project`.
     for row in rows {
         let item_id: String = row.try_get::<String, _>(id_col).unwrap_or_default();
         if item_id.is_empty() {
             continue;
         }
-        let at_global_level: Option<(i64,)> = sqlx::query_as(&format!(
+        let at_global_level: Option<(i64,)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT 1 FROM {dest_table} WHERE item_id = ? AND level = 'global' LIMIT 1"
-        ))
+        )))
         .bind(&item_id)
         .fetch_optional(&mut *global)
         .await?;
@@ -251,11 +256,11 @@ async fn sync_policy_table(
             continue;
         }
         let payload = row_to_policy_json(row, id_col);
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "INSERT INTO {dest_table} (project_id, item_id, payload, level) VALUES (?, ?, ?, 'mirror')
              ON CONFLICT(project_id, item_id) DO UPDATE SET payload = excluded.payload, synced_at = CURRENT_TIMESTAMP
              WHERE level = 'mirror'"
-        ))
+        )))
         .bind(pid)
         .bind(&item_id)
         .bind(payload.to_string())
@@ -463,7 +468,7 @@ mod tests {
     }
 
     async fn count(pool: &SqlitePool, table: &str) -> i64 {
-        let row: (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM {table}"))
+        let row: (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
             .fetch_one(pool)
             .await
             .unwrap();

@@ -364,12 +364,15 @@ pub fn prune_chunks(root: &Path) -> Result<()> {
 }
 async fn columns(pool: &SqlitePool, table: &str) -> Result<Vec<String>> {
     ensure!(TABLES.contains(&table), "unregistered table");
-    Ok(sqlx::query(&format!("PRAGMA table_info(\"{table}\")"))
-        .fetch_all(pool)
-        .await?
-        .into_iter()
-        .map(|r| r.get("name"))
-        .collect())
+    // Safe: `table` is checked against `TABLES` above.
+    Ok(sqlx::query(sqlx::AssertSqlSafe(format!(
+        "PRAGMA table_info(\"{table}\")"
+    )))
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|r| r.get("name"))
+    .collect())
 }
 fn native_filter(table: &str) -> &'static str {
     match table {
@@ -410,7 +413,9 @@ pub async fn export(root: &Path, origin: &str, _pool: &SqlitePool) -> Result<Dat
             .map(|n| format!("\"{n}\""))
             .collect::<Vec<_>>()
             .join(",");
-        sqlx::query(&format!("INSERT OR REPLACE INTO main.\"{table}\" ({cols}) SELECT {cols} FROM native.\"{table}\" WHERE {} ORDER BY rowid", native_filter(table))).execute(&mut *tx).await?;
+        // Safe: `table` comes from `TABLES`, columns from the local schema, and the
+        // filter is a literal from `native_filter`.
+        sqlx::query(sqlx::AssertSqlSafe(format!("INSERT OR REPLACE INTO main.\"{table}\" ({cols}) SELECT {cols} FROM native.\"{table}\" WHERE {} ORDER BY rowid", native_filter(table)))).execute(&mut *tx).await?;
     }
     sqlx::query("UPDATE schema_versions SET applied_at=0")
         .execute(&mut *tx)
@@ -749,10 +754,11 @@ async fn fill_attached(
             "agent_sessions",
             "agent_context_cache",
         ] {
-            sqlx::query(&format!(
+            // Safe: literal table list and a static identity column.
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "DELETE FROM \"{table}\" WHERE \"{}\" GLOB ?",
                 identity(table)
-            ))
+            )))
             .bind(format!("{prefix}*"))
             .execute(&mut **tx)
             .await?;
@@ -776,7 +782,9 @@ async fn fill_attached(
                 .map(|c| mapped(table, c, &prefix, community_offset))
                 .collect::<Vec<_>>()
                 .join(",");
-            sqlx::query(&format!("INSERT INTO main.\"{table}\" ({into}) SELECT {select} FROM replicated.\"{table}\" ORDER BY rowid")).execute(&mut **tx).await?;
+            // Safe: `table` comes from `TABLES`, columns from the local schema, and
+            // `prefix` embeds an origin that `validate` limits to [A-Za-z0-9_-].
+            sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO main.\"{table}\" ({into}) SELECT {select} FROM replicated.\"{table}\" ORDER BY rowid"))).execute(&mut **tx).await?;
         }
         // Candidate IDs are JSON arrays and need the same namespace as resolved edges.
         let rows: Vec<(i64, Option<String>)> =
@@ -1211,41 +1219,48 @@ pub async fn table_contract(pool: &SqlitePool, table: &str) -> Result<TableContr
                 .all(|b| b.is_ascii_alphanumeric() || b == b'_'),
         "Invalid contract table name"
     );
-    let mut columns: Vec<_> = sqlx::query(&format!("PRAGMA table_xinfo(\"{table}\")"))
-        .fetch_all(pool)
-        .await?
-        .iter()
-        .map(|r| {
-            (
-                r.get::<String, _>("name"),
-                r.get::<String, _>("type").to_uppercase(),
-                r.get::<i64, _>("notnull"),
-                r.get::<i64, _>("pk"),
-                r.get::<i64, _>("hidden"),
-            )
-        })
-        .collect();
+    // Safe: `table` passed the [A-Za-z0-9_] check above.
+    let mut columns: Vec<_> = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "PRAGMA table_xinfo(\"{table}\")"
+    )))
+    .fetch_all(pool)
+    .await?
+    .iter()
+    .map(|r| {
+        (
+            r.get::<String, _>("name"),
+            r.get::<String, _>("type").to_uppercase(),
+            r.get::<i64, _>("notnull"),
+            r.get::<i64, _>("pk"),
+            r.get::<i64, _>("hidden"),
+        )
+    })
+    .collect();
     columns.sort();
-    let mut foreign_keys: Vec<_> = sqlx::query(&format!("PRAGMA foreign_key_list(\"{table}\")"))
-        .fetch_all(pool)
-        .await?
-        .iter()
-        .map(|r| {
-            (
-                r.get::<String, _>("table"),
-                r.get::<String, _>("from"),
-                r.get::<String, _>("to"),
-                r.get::<String, _>("on_update"),
-                r.get::<String, _>("on_delete"),
-                r.get::<String, _>("match"),
-            )
-        })
-        .collect();
+    let mut foreign_keys: Vec<_> = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "PRAGMA foreign_key_list(\"{table}\")"
+    )))
+    .fetch_all(pool)
+    .await?
+    .iter()
+    .map(|r| {
+        (
+            r.get::<String, _>("table"),
+            r.get::<String, _>("from"),
+            r.get::<String, _>("to"),
+            r.get::<String, _>("on_update"),
+            r.get::<String, _>("on_delete"),
+            r.get::<String, _>("match"),
+        )
+    })
+    .collect();
     foreign_keys.sort();
     let mut unique_indexes = Vec::new();
-    for row in sqlx::query(&format!("PRAGMA index_list(\"{table}\")"))
-        .fetch_all(pool)
-        .await?
+    for row in sqlx::query(sqlx::AssertSqlSafe(format!(
+        "PRAGMA index_list(\"{table}\")"
+    )))
+    .fetch_all(pool)
+    .await?
     {
         if row.get::<i64, _>("unique") == 0 {
             continue;
@@ -1296,7 +1311,9 @@ pub async fn validate_table_values(
         } else {
             String::new()
         };
-        let invalid:bool=sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM \"{table}\" WHERE {null}(\"{column}\" IS NOT NULL AND typeof(\"{column}\") NOT IN ({types})))")).fetch_one(pool).await?;
+        // Safe: `table` is a registered table and `contract` is the local schema
+        // (the incoming contract must equal it); `types` is a literal.
+        let invalid:bool=sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT EXISTS(SELECT 1 FROM \"{table}\" WHERE {null}(\"{column}\" IS NOT NULL AND typeof(\"{column}\") NOT IN ({types})))"))).fetch_one(pool).await?;
         ensure!(
             !invalid,
             "Invalid replicated value type in {table}.{column}"

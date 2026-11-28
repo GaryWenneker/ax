@@ -680,6 +680,7 @@ pub async fn adopt_project_keys(
     if legacy.is_empty() {
         return Ok(0);
     }
+    // Safe (probe and updates): tables come from `PROJECT_TABLES`, keys are bound.
     let marks = vec!["?"; legacy.len()].join(", ");
     let probe = PROJECT_TABLES
         .iter()
@@ -687,7 +688,7 @@ pub async fn adopt_project_keys(
         .map(|table| format!("SELECT 1 FROM {table} WHERE project_id IN ({marks})"))
         .collect::<Vec<_>>()
         .join(" UNION ALL ");
-    let mut query = sqlx::query(&probe);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(probe));
     for _ in 0..=PROJECT_TABLES.len() {
         for key in &legacy {
             query = query.bind(*key);
@@ -704,9 +705,9 @@ pub async fn adopt_project_keys(
     let mut moved = 0;
     for key in &legacy {
         for table in PROJECT_TABLES {
-            moved += sqlx::query(&format!(
+            moved += sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {table} SET project_id = ? WHERE project_id = ?"
-            ))
+            )))
             .bind(canonical)
             .bind(key)
             .execute(&mut *tx)

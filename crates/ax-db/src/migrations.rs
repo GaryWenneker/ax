@@ -745,7 +745,10 @@ async fn apply_migration(
         return Ok(());
     }
     for trimmed in crate::schema::split_statements(migration.sql) {
-        let result = sqlx::query(&trimmed).execute(&mut *conn).await;
+        // Safe: statements come from the compiled-in migration list.
+        let result = sqlx::query(sqlx::AssertSqlSafe(trimmed.as_str()))
+            .execute(&mut *conn)
+            .await;
         if let Err(e) = result {
             let msg = e.to_string();
             if msg.contains("duplicate column") || msg.contains("already exists") {
